@@ -1,17 +1,17 @@
-// mask.frag
 #version 410
 
-#extension GL_EXT_gpu_shader4 : enable
-
-precision mediump float;
-
+in vec2 pos;
 in vec2 uv;
 in vec4 color;
-in vec2 screen;
-layout(location = 0) out vec4 fragColor;
 
-uniform sampler2D rgbaTex;
+uniform vec2 windowFrame;
+uniform sampler2D atlasTex;
+uniform sampler2D maskTex;
+
+out vec4 fragColor;
 
 void main() {
-  fragColor = texture(rgbaTex, uv).rgba * color;
+  fragColor = vec4((texture(atlasTex, uv).rgba * color).a);
+  vec2 normalizedPos = vec2(pos.x / windowFrame.x, 1 - pos.y / windowFrame.y);
+  fragColor.a *= texture(maskTex, normalizedPos).r;
 }

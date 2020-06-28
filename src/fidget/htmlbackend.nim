@@ -1,84 +1,145 @@
-import chroma, dom2 as dom, html5_canvas, internal, math, strformat, strutils,
-    tables, uibase, vmath
+import chroma, common, dom2 as dom, html5_canvas, input, internal, math, os,
+    strformat, strutils, tables, vmath, html/ajax, json
+
+const defaultStyle = """
+div {
+  border: none;
+  outline: none;
+  background-color: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  padding: 0;
+  margin: 0;
+  resize: none;
+  position: absolute;
+  display: block;
+}
+"""
 
 type
   PerfCounter* = object
     drawMain*: float
     numLowLevelCalls*: int
 
-var
-  groupCache*: seq[Group]
-  domCache*: seq[Element]
+  Node = common.Node
+  HTMLNode = dom.Node
 
+var
   rootDomNode*: Element
   canvasNode*: Element
   ctx*: CanvasRenderingContext2D
 
-  forceTextRelayout*: bool
+  forceTextReLayout*: bool
 
   perf*: PerfCounter
 
-var colorCache = newTable[chroma.Color, string]()
+var colorCache: Table[chroma.Color, string]
 proc toHtmlRgbaCached(color: Color): string =
   result = colorCache.getOrDefault(color)
   if result == "":
     result = color.toHtmlRgba()
     colorCache[color] = result
 
-proc removeAllChildren(dom: Node) =
+proc focus*(keyboard: Keyboard, node: Node) =
+  ## uses JS events
+  discard
+
+proc unFocus*(keyboard: Keyboard, node: Node) =
+  ## uses JS events
+  discard
+
+proc removeAllChildren(dom: HTMLNode) =
   while dom.firstChild != nil:
     dom.removeChild(dom.firstChild)
 
 proc removeTextSelection*() {.exportc.} =
-  echo dom.window.document.getSelection()
   dom.window.document.getSelection().removeAllRanges()
 
-var computeTextBoxCache = newTable[string, (float, float)]()
+var
+  computeTextBoxCache = newTable[string, Vec2]()
+  tempDiv: Element
 proc computeTextBox*(
   text: string,
   width: float,
   fontName: string,
   fontSize: float,
   fontWeight: float,
-): (float, float) =
+  lineHeight: float,
+): Vec2 =
   ## Give text, font and a width of the box, compute how far the
   ## text will fill down the hight of the box.
   let key = text & $width & fontName & $fontSize
   if key in computeTextBoxCache:
     return computeTextBoxCache[key]
-  var tempDiv = document.createElement("div")
-  document.body.appendChild(tempDiv)
+  if tempDiv == nil:
+    tempDiv = document.createElement("div")
+    rootDomNode.appendChild(tempDiv)
+    tempDiv.style.position = "absolute"
+    tempDiv.style.left = "-10000px"
+    tempDiv.style.top = "-10000px"
+
   tempDiv.style.fontSize = $fontSize & "px"
+  tempDiv.style.lineHeight = $lineHeight & "px"
   tempDiv.style.fontFamily = fontName
   tempDiv.style.fontWeight = $fontWeight
-  tempDiv.style.position = "absolute"
-  tempDiv.style.left = "-1000"
-  tempDiv.style.top = "-1000"
   tempDiv.style.maxWidth = $width & "px"
-  tempDiv.innerHTML = text
-  result[0] = float tempDiv.clientWidth
-  result[1] = float tempDiv.clientHeight
-  document.body.removeChild(tempDiv)
+
+  tempDiv.innerText = text
+
+  result.x = float tempDiv.clientWidth
+  result.y = float tempDiv.clientHeight
   computeTextBoxCache[key] = result
 
-proc computeTextHeight*(
-  text: string,
-  width: float,
+computeTextLayout = proc(node: Node) =
+  let size = computeTextBox(
+    node.text,
+    node.box.w,
+    node.textStyle.fontFamily,
+    node.textStyle.fontSize,
+    node.textStyle.fontWeight,
+    node.textStyle.lineHeight,
+  )
+  node.textLayoutWidth = size.x
+  node.textLayoutHeight = size.y
+
+type
+  TextMetrics* {.importc.} = ref object
+    width: float # This is read-only
+    actualBoundingBoxAscent*: float
+    actualBoundingBoxDescent*: float
+    actualBoundingBoxLeft*: float
+    actualBoundingBoxRight*: float
+    alphabeticBaseline*: float
+    emHeightAscent*: float
+    emHeightDescent*: float
+    fontBoundingBoxAscent*: float
+    fontBoundingBoxDescent*: float
+    hangingBaseline*: float
+    ideographicBaseline*: float
+
+proc measureText(
+  ctx: CanvasRenderingContext2D,
+  text: cstring
+): TextMetrics {.importcpp.}
+
+var baseLineCache = newTable[string, float]()
+proc getBaseLine *(
   fontName: string,
   fontSize: float,
   fontWeight: float,
 ): float =
-  ## Give text, font and a width of the box, compute how far the
-  ## text will fill down the hight of the box.
-  let (_, h) = computeTextBox(text, width, fontName, fontSize, fontWeight)
-  return h
+  let font = &"{fontSize}px {fontName}"
+  if font notin baseLineCache:
+    ctx.font = &"{fontSize}px {fontName}"
+    let m = ctx.measureText("A")
+    baseLineCache[font] = fontSize - m.actualBoundingBoxAscent
+  baseLineCache[font]
 
-proc tag(group: Group): string =
-  if group.kind == "":
-    return ""
-  elif group.kind == "text":
-    if group.editableText:
-      if group.multiline:
+proc tag(node: Node): string =
+  if node.kind == nkText:
+    if node.editableText:
+      if node.multiline:
         return "textarea"
       else:
         return "input"
@@ -103,232 +164,224 @@ proc createDefaultElement(tag: string): Element =
 proc insertChildAtIndex(parent: Element, index: int, child: Element) =
   parent.insertBefore(child, parent.children[index])
 
-proc drawDiff(current: Group) =
+template hasDifferent(node: common.Node, key: untyped): bool =
+  if node.cache.key != node.key:
+    node.cache.key = node.key
+    true
+  else:
+    false
 
-  if groupCache.len == numGroups:
-    inc perf.numLowLevelCalls
+proc remove*(element: Element) =
+  remove(cast[HTMLNode](element))
 
-    var old = Group()
-    old.kind = current.kind
-    old.editableText = current.editableText
-    old.multiline = current.multiline
-    var dom = createDefaultElement(current.tag)
-    rootDomNode.appendChild(dom)
+proc remove*(node: Node) =
+  ## Removes non needed HTML elements right before node is removed.
+  if node.element != nil:
+    node.element.remove()
+    node.element = nil
+  if node.textElement != nil:
+    node.textElement.remove()
+    node.textElement = nil
+  nodeLookup.del(node.uid)
+  node.cache = nil
 
-    groupCache.add(old)
-    domCache.add(dom)
+proc removeExtraChildren*(node: Node) =
+  ## Deal with removed nodes.
+  if node.diffIndex != node.nodes.len:
+    for i in node.diffIndex ..< node.nodes.len:
+      remove(node.nodes[i])
+    node.nodes.setLen(node.diffIndex)
 
-  var
-    dom = domCache[numGroups]
-    old = groupCache[numGroups]
+proc draw*(index: int, node: Node, parent: Node) =
+  ## Draws the node (diffs HTML elements).
 
-  # When tags don't match we can't convert a node
-  # into another node, so we have to recreate them
-  if old.tag != current.tag:
-    inc perf.numLowLevelCalls
+  if node.cache != nil:
+    if node.cache.kind == nkText and node.kind != nkText:
+      # Remove text stuff from the node.
+      node.element.removeAttribute("style")
+      node.textElement.remove()
+      node.textElement = nil
+      node.cache = Node()
+      node.cache.kind = node.kind
 
-    old = Group()
-    old.kind = current.kind
-    old.editableText = current.editableText
-    old.multiline = current.multiline
-    dom = createDefaultElement(current.tag)
-    rootDomNode.replaceChild(dom, rootDomNode.children[numGroups])
-    domCache[numGroups] = dom
-    groupCache[numGroups] = old
+    if node.cache.kind != nkText and node.kind == nkText:
+      # Remove non-text stuff from the node.
+      node.element.removeAttribute("style")
+      node.cache = Node()
+      node.cache.kind = node.kind
 
-  # change kinds
-  if old.kind != current.kind:
-    old.kind = current.kind
-
-  # check ID path
-  if old.idPath != current.idPath:
-    inc perf.numLowLevelCalls
-    old.id = current.id
-    old.idPath = current.idPath
-    dom.id = current.idPath
-
-  # check fill (background color or text color)
-  if old.fill != current.fill:
-    inc perf.numLowLevelCalls
-    old.fill = current.fill
-    if current.kind == "text":
-      dom.style.color = $current.fill.toHtmlRgba()
-      dom.style.backgroundColor = "rgba(0,0,0,0)"
+  if node.element == nil:
+    node.element = document.createElement("div")
+    nodeLookup[node.uid] = node
+    if parent == nil:
+      rootDomNode.appendChild(node.element)
     else:
-      dom.style.backgroundColor = $current.fill.toHtmlRgba()
-      dom.style.color = "rgba(0,0,0,0)"
+      parent.element.appendChild(node.element)
+    node.cache = Node()
+    node.cache.kind = node.kind
 
-  # check storke (border color)
-  if old.stroke != current.stroke or
-      old.strokeWeight != current.strokeWeight:
-    inc perf.numLowLevelCalls
-    old.stroke = current.stroke
-    old.strokeWeight = current.strokeWeight
-    if current.strokeWeight > 0:
-      dom.style.borderStyle = "solid"
-      dom.style.boxSizing = "border-box"
-      dom.style.borderColor = $current.stroke.toHtmlRgba()
-      dom.style.borderWidth = $current.strokeWeight & "px"
+
+  # Add the text part if this is a text node.
+  if node.kind == nkText and node.textElement == nil:
+    node.textElement = document.createElement("div")
+    node.textElement.style.display = "table-cell"
+    node.textElement.style.position = "unset"
+    node.textElement.style.whiteSpace = "pre"
+    node.element.appendChild(node.textElement)
+
+  # Check if text should be editable by user.
+  if node.hasDifferent(editableText):
+    if node.editableText:
+      node.textElement.setAttribute("contenteditable", "true")
+      node.element.style.overflowX = "hidden"
+      node.element.style.overflowY = "auto"
     else:
-      dom.style.borderStyle = "none"
+      node.textElement.setAttribute("contenteditable", "true")
+      node.element.style.overflowX = "visible"
+      node.element.style.overflowY = "visible"
 
-  # check cornerRadius (border raidus)
-  if old.cornerRadius != current.cornerRadius:
-    old.cornerRadius = current.cornerRadius
-    dom.style.borderRadius = (
-      $current.cornerRadius[0] & "px " &
-      $current.cornerRadius[1] & "px " &
-      $current.cornerRadius[2] & "px " &
-      $current.cornerRadius[3] & "px"
-    )
+  # Check node id.
+  if node.hasDifferent(id):
+    node.element.setAttribute("class", node.id)
 
-  # check transparency
-  if old.transparency != current.transparency:
-    inc perf.numLowLevelCalls
-    old.transparency = current.transparency
-    dom.style.opacity = $current.transparency
+  # Check node uid.
+  if node.hasDifferent(uid):
+    node.element.setAttribute("id", node.uid)
 
-  # check shadows
-  if old.shadows != current.shadows:
-    inc perf.numLowLevelCalls
-    old.shadows = current.shadows
-    var boxShadowString = ""
-    for s in current.shadows:
-      if s.kind == DropShadow:
-        boxShadowString.add &"{s.x}px {s.y}px {s.blur}px {s.color.toHtmlRgba},"
-      if s.kind == InnerShadow:
-        boxShadowString.add &"inset {s.x}px {s.y}px {s.blur}px {s.color.toHtmlRgba},"
-    if boxShadowString.len > 0:
-      boxShadowString.setLen(boxShadowString.len - 1)
-    dom.style.boxShadow = boxShadowString
-
-  # check text style
-  if old.textStyle != current.textStyle:
-    inc perf.numLowLevelCalls
-    old.textStyle = current.textStyle
-    dom.style.fontFamily = current.textStyle.fontFamily
-    dom.style.fontSize = $current.textStyle.fontSize & "px"
-    dom.style.fontWeight = $current.textStyle.fontWeight
-    # TODO check this
-    if current.textStyle.lineHeight == 0:
-      dom.style.lineHeight = "normal"
+  node.zIndex =
+    if parent != nil:
+      parent.nodes.len - index
     else:
-      dom.style.lineHeight = $current.textStyle.lineHeight & "px"
+      0
+  if node.hasDifferent(zIndex):
+    node.element.style.zIndex = node.zIndex
 
-  # check imageName (background image)
-  if old.imageName != current.imageName:
-    inc perf.numLowLevelCalls
-    old.imageName = current.imageName
-    if current.imageName != "":
-      dom.style.backgroundImage = "url(" & current.imageName & ")"
-      dom.style.backgroundSize = "100% 100%"
+  # Check dimensions (always absolute positioned).
+  if node.hasDifferent(box):
+    node.element.style.left = $node.box.x & "px"
+    node.element.style.top = $node.box.y & "px"
+    node.element.style.width = $node.box.w & "px"
+    node.element.style.height = $node.box.h & "px"
+
+    if node.textElement != nil:
+      node.textElement.style.width = $node.box.w & "px"
+      node.textElement.style.height = $node.box.h & "px"
+
+  # Check transparency.
+  if node.hasDifferent(transparency):
+    node.element.style.opacity = $node.transparency
+
+  if node.hasDifferent(clipContent):
+    if node.clipContent:
+      node.element.style.overflow = "hidden"
     else:
-      dom.style.backgroundImage = ""
+      node.element.style.overflow = "visable"
 
-  # check placeholder (gray text that appears inside when no text)
-  if old.placeholder != current.placeholder:
-    old.placeholder = current.placeholder
-    dom.setAttribute("placeholder", current.placeholder)
+  if node.kind == nkText:
+    # In a text node many params apply to the text (not the fill).
 
-  if current.textPadding != old.textPadding:
-    old.textPadding = current.textPadding
-    dom.style.padding = $current.textPadding & "px"
-    dom.style.boxSizing = "border-box"
+    # Check fill (text color).
+    if node.hasDifferent(fill):
+      node.textElement.style.color = $node.fill.toHtmlRgba()
 
-  if old.screenBox.wh == current.box.wh:
-    current.textOffset = old.textOffset
+    if node.hasDifferent(text):
+      if keyboard.focusNode != node:
+        node.textElement.innerText = node.text
+      else:
+        # Don't mess with inner text when user is typing!
+        discard
 
-  if current.kind == "text":
-    if current.editableText:
-      if old.text != current.text:
-        if document.activeElement != dom:
-          cast[TextAreaElement](dom).value = current.text
-    else:
-      if forceTextRelayout or (old.text != current.text):
-        inc perf.numLowLevelCalls
-        old.text = current.text
+    if node.hasDifferent(textStyle):
 
-        dom.innerText = current.text
+      node.textElement.style.fontFamily = node.textStyle.fontFamily
+      node.textElement.style.fontSize = $node.textStyle.fontSize & "px"
+      node.textElement.style.fontWeight = $node.textStyle.fontWeight
+      node.textElement.style.lineHeight = $max(0, node.textStyle.lineHeight) & "px"
 
-        if current.textStyle.textAlignHorizontal != hLeft or
-            current.textStyle.textAlignVertical != vTop:
-          var box = computeTextBox(
-            current.text,
-            current.screenBox.w,
-            current.textStyle.fontFamily,
-            current.textStyle.fontSize,
-            current.textStyle.fontWeight
-          )
+      case node.textStyle.textAlignHorizontal:
+        of hLeft:
+          node.textElement.style.textAlign = "left"
+        of hCenter:
+          node.textElement.style.textAlign = "center"
+        of hRight:
+          node.textElement.style.textAlign = "right"
+      case node.textStyle.textAlignVertical:
+        of vTop:
+          node.textElement.style.verticalAlign = "top"
+        of vCenter:
+          node.textElement.style.verticalAlign = "middle"
+        of vBottom:
+          node.textElement.style.verticalAlign = "bottom"
 
-          var left = 0.0
-          case current.textStyle.textAlignHorizontal:
-            of hLeft:
-              left = 0
-            of hRight:
-              left = current.screenBox.w - box[0]
-            of hCenter:
-              left = current.screenBox.w / 2 - box[0] / 2
+  else:
+    # Not text node.
 
-          var top = 0.0
-          case current.textStyle.textAlignVertical:
-            of vTop:
-              top = 0
-            of vBottom:
-              top = current.screenBox.h - box[1]
-            of vCenter:
-              top = current.screenBox.h / 2 - box[1] / 2
+    # Check shadows.
+    if node.hasDifferent(shadows):
+      var boxShadowString = ""
+      for s in node.shadows:
+        if s.kind == DropShadow:
+          boxShadowString.add &"{s.x}px {s.y}px {s.blur}px {s.color.toHtmlRgba},"
+        if s.kind == InnerShadow:
+          boxShadowString.add &"inset {s.x}px {s.y}px {s.blur}px {s.color.toHtmlRgba},"
+      if boxShadowString.len > 0:
+        boxShadowString.setLen(boxShadowString.len - 1)
+      node.element.style.boxShadow = boxShadowString
 
-          current.textOffset.x = left
-          current.textOffset.y = top
-        else:
-          current.textOffset.x = 0
-          current.textOffset.y = 0
+    # Check for image (background image).
+    if node.hasDifferent(imageName):
+      if node.imageName != "":
+        node.element.style.backgroundImage = &"url({dataDir / node.imageName})"
+        node.element.style.backgroundSize = "100% 100%"
+      else:
+        node.element.style.backgroundImage = ""
 
-  if current.tag == "input":
-    dom.style.paddingBottom = $(current.box.h - current.textStyle.lineHeight) & "px"
-    case current.textStyle.textAlignHorizontal:
-      of hLeft:
-        dom.style.textAlign = "left"
-      of hRight:
-        dom.style.textAlign = "right"
-      of hCenter:
-        dom.style.textAlign = "center"
+    # Check fill (background color).
+    if node.hasDifferent(fill):
+      node.element.style.backgroundColor = $node.fill.toHtmlRgba()
 
-  # check position on screen
-  if old.screenBox != current.screenBox or old.textOffset != current.textOffset:
-    inc perf.numLowLevelCalls
-    old.screenBox = current.screenBox
-    old.textOffset = current.textOffset
-    dom.style.position = "absolute"
-    dom.style.left = $(current.screenBox.x + current.textOffset.x) & "px"
-    dom.style.top = $(current.screenBox.y + current.textOffset.y) & "px"
-    dom.style.width = $current.screenBox.w & "px"
-    dom.style.height = $current.screenBox.h & "px"
+    # Check stroke weight (border).
+    if node.hasDifferent(strokeWeight) or node.hasDifferent(stroke):
+      if node.strokeWeight != 0:
+        node.element.style.borderWidth = $node.strokeWeight & "px"
+        node.element.style.borderColor = $node.stroke.toHtmlRgba()
+        node.element.style.boxSizing = "border-box"
+        node.element.style.borderStyle = "solid"
+      else:
+        node.element.style.borderStyle = "none"
 
-  inc numGroups
+    # Check corner radius (border radius)
+    if node.hasDifferent(cornerRadius):
+      node.element.style.borderRadius = (
+        $node.cornerRadius[0] & "px " &
+        $node.cornerRadius[1] & "px " &
+        $node.cornerRadius[2] & "px " &
+        $node.cornerRadius[3] & "px"
+      )
 
-proc draw*(group: Group) =
-  drawDiff(group)
+  for i, n in node.nodes:
+    draw(i, n, node)
 
 var startTime: float
 var prevMouseCursorStyle: MouseCursorStyle
 
 proc drawStart() =
   startTime = dom.window.performance.now()
-  numGroups = 0
+  numNodes = 0
   perf.numLowLevelCalls = 0
+  pathChecker.clear()
 
   pixelRatio = dom.window.devicePixelRatio
-  windowSize.x = float dom.window.innerWidth
-  windowSize.y = float document.body.clientHeight
-  windowFrame.x = float screen.width
-  windowFrame.y = float screen.height
+  windowSize.x = window.innerWidth.float32
+  windowSize.y = window.innerHeight.float32
+  windowFrame.x = window.innerWidth.float32
+  windowFrame.y = window.innerHeight.float32
 
   # set up root HTML
   root.box.x = 0
   root.box.y = 0
-  root.box.w = windowSize.x #document.body.clientWidth #
-  root.box.h = windowSize.y
+  root.box.w = windowFrame.x
+  root.box.h = windowFrame.y
   root.transparency = 1.0
 
   scrollBox.x = float dom.window.scrollX
@@ -348,6 +401,14 @@ proc drawStart() =
 
   document.body.style.overflowX = "hidden"
   document.body.style.overflowY = "scroll"
+
+  if document.activeElement != nil:
+    let selection = document.getSelection()
+    keyboard.textCursor = selection.anchorOffset
+    keyboard.selectionCursor = selection.focusOffset
+  else:
+    keyboard.textCursor = 0
+    keyboard.selectionCursor = 0
 
   var canvas = cast[Canvas](canvasNode)
   ctx = canvas.getContext2D()
@@ -375,15 +436,9 @@ proc drawFinish() =
 
   perf.drawMain = dom.window.performance.now() - startTime
 
-  #echo perf.drawMain
-  #echo numGroups
-  #echo perf.numLowLevelCalls
-
-  # remove left over nodes
-  while rootDomNode.childNodes.len > numGroups:
-    rootDomNode.removeChild(domCache[^1])
-    discard groupCache.pop()
-    discard domCache.pop()
+  # echo perf.drawMain
+  # echo numNodes
+  # echo perf.numLowLevelCalls
 
   # Only set mouse style when it changes.
   if prevMouseCursorStyle != mouse.cursorStyle:
@@ -398,8 +453,7 @@ proc drawFinish() =
       of NSResize:
         rootDomNode.style.cursor = "ns-resize"
 
-  # Used for onFocus/onUnFocus.
-  keyboard.prevInputFocusIdPath = keyboard.inputFocusIdPath
+  clearInputs()
 
 proc hardRedraw() =
   if rootDomNode == nil: # check if we have loaded
@@ -409,6 +463,14 @@ proc hardRedraw() =
 
   drawStart()
   drawMain()
+
+  root.removeExtraChildren()
+
+  computeLayout(nil, root)
+  computeScreenBox(nil, root)
+
+  draw(0, root, nil)
+
   drawFinish()
 
 proc requestHardRedraw(time: float = 0.0) =
@@ -420,17 +482,7 @@ proc refresh*() =
     requestedFrame = true
     discard dom.window.requestAnimationFrame(requestHardRedraw)
 
-proc set*(keyboard: Keyboard, state: KeyState, event: KeyboardEvent) =
-  keyboard.state = state
-  keyboard.keyCode = event.keyCode
-  var keyString: cstring
-  asm """`keyString` = `event`.key"""
-  keyboard.keyString = $keyString
-  keyboard.altKey = event.altKey
-  keyboard.ctrlKey = event.ctrlKey
-  keyboard.shiftKey = event.shiftKey
-
-proc startFidget*(draw: proc()) =
+proc startFidget*(draw: proc(), w = 0, h = 0) =
   ## Start the HTML backend
   ## NOTE: returns instantly!
   drawMain = draw
@@ -438,10 +490,17 @@ proc startFidget*(draw: proc()) =
   dom.window.addEventListener "load", proc(event: Event) =
     ## called when html page loads and JS can start running
     rootDomNode = document.createElement("div")
+    rootDomNode.style.position = "absolute"
+    rootDomNode.style.top = "0px"
+    rootDomNode.style.left = "0px"
     document.body.appendChild(rootDomNode)
-
+    # Add a canvas node for drawing.
     canvasNode = document.createElement("canvas")
     document.body.appendChild(canvasNode)
+    # Add a style node.
+    var styleNode = document.createElement("style")
+    styleNode.innerText = defaultStyle
+    document.head.appendChild(styleNode)
     refresh()
 
   dom.window.addEventListener "resize", proc(event: Event) =
@@ -455,17 +514,18 @@ proc startFidget*(draw: proc()) =
   dom.window.addEventListener "mousedown", proc(event: Event) =
     ## When mouse button is pressed
     let event = cast[MouseEvent](event)
-    mouse.pos.x = float event.pageX
-    mouse.pos.y = float event.pageY
-    mouse.click = true
-    mouse.down = true
-    hardRedraw()
-    mouse.click = false
+    let key = mouseButtonToButton[event.button]
+    buttonPress[key] = true
+    buttonDown[key] = true
+    refresh()
 
   dom.window.addEventListener "mouseup", proc(event: Event) =
     ## When mouse button is released
+    let event = cast[MouseEvent](event)
+    let key = mouseButtonToButton[event.button]
+    buttonDown[key] = false
+    buttonRelease[key] = true
     refresh()
-    mouse.down = false
 
   dom.window.addEventListener "mousemove", proc(event: Event) =
     # When mouse moves
@@ -474,74 +534,75 @@ proc startFidget*(draw: proc()) =
     mouse.pos.y = float event.pageY
     refresh()
 
+  dom.window.addEventListener "keypress", proc(event: Event) =
+    let event = cast[KeyboardEvent](event)
+    if keyboard.focusNode != nil and not keyboard.focusNode.multiline:
+      if event.keyCode == 13:
+        event.preventDefault()
+
   dom.window.addEventListener "keydown", proc(event: Event) =
     ## When keyboards key is pressed down
-    ## Used together with keyup for continuous things like scroll or games
+    ## Used together with key up for continuous things like scroll or games
     let event = cast[KeyboardEvent](event)
-    keyboard.set(Down, event)
+    #keyboard.set(Down, event)
+    keyboard.state = KeyState.Press
+    let key = keyCodeToButton[event.keyCode]
+    buttonToggle[key] = not buttonToggle[key]
+    buttonPress[key] = true
+    buttonDown[key] = true
     hardRedraw()
-    if keyboard.state != Empty:
-      keyboard.consume()
-    else:
+    if keyboard.consumed:
       event.preventDefault()
+      keyboard.consumed = false
 
   dom.window.addEventListener "keyup", proc(event: Event) =
     ## When keyboards key is pressed down
     ## Used together with keydown
     let event = cast[KeyboardEvent](event)
-    keyboard.set(Up, event)
+    let key = keyCodeToButton[event.keyCode]
+    buttonDown[key] = false
+    buttonRelease[key] = true
+    keyboard.state = KeyState.Up
     hardRedraw()
-    if keyboard.state != Empty:
-      keyboard.consume()
-    else:
-      event.preventDefault()
-
-  # dom.window.addEventListener "keypress", proc(event: Event) =
-  #   ## When keyboards key is pressed
-  #   ## Used for typing because of key repeats
-  #   keyboard.set(Press, event)
-  #   hardRedraw()
-  #   if keyboard.state != Empty:
-  #     keyboard.use()
-  #   else:
-  #     event.preventDefault()
-
-  proc isTextTag(node: Node): bool =
-    node.nodeName == "TEXTAREA" or node.nodeName == "INPUT"
 
   dom.window.addEventListener "input", proc(event: Event) =
     ## When INPUT element has keyboard input this is called
-    if document.activeElement.isTextTag:
-      let activeTextElement = cast[TextAreaElement](document.activeElement)
-      keyboard.input = $(activeTextElement.value)
-      keyboard.inputFocusIdPath = $document.activeElement.id
-      keyboard.state = Press
-      keyboard.textCursor = activeTextElement.selectionStart
-      keyboard.selectionCursor = activeTextElement.selectionEnd
-      refresh()
+    keyboard.input = $document.activeElement.innerText
+    keyboard.state = Press
+    # fix keyboard input if it has \n in it
+    if keyboard.focusNode != nil and not keyboard.focusNode.multiline:
+      if "\n" in keyboard.input:
+        keyboard.input = keyboard.input.replace("\n", "")
+        document.activeElement.innerText = keyboard.input
+        # TODO Keep the selection the same
+    refresh()
 
   dom.window.addEventListener "focusin", proc(event: Event) =
     ## When INPUT element gets focus this is called, set the keyboard.input and
     ## the keyboard.inputFocusId
     ## Note: "focus" does not bubble, so its not used here.
-    if document.activeElement.isTextTag:
-      let activeTextElement = cast[TextAreaElement](document.activeElement)
-      keyboard.input = $(activeTextElement.value)
-      keyboard.inputFocusIdPath = $document.activeElement.id
-      keyboard.textCursor = activeTextElement.selectionStart
-      keyboard.selectionCursor = activeTextElement.selectionEnd
-      refresh()
+    var uid: string
+    if document.activeElement.hasAttribute("id"):
+      uid = $document.activeElement.getAttribute("id")
+    else:
+      uid = $document.activeElement.parentNode.getAttribute("id")
+    #Note: keyboard.onUnFocusNode is set by focus out.
+    let node = nodeLookup[uid]
+    keyboard.input = node.text
+    keyboard.onFocusNode = node
+    keyboard.focusNode = node
+    refresh()
 
   dom.window.addEventListener "focusout", proc(event: Event) =
     ## When INPUT element looses focus this is called, clear keyboard.input and
     ## the keyboard.inputFocusId
     ## Note: "blur" does not bubble, so its not used here.
-
     # redraw everything to sync up the bind(string)
-    refresh()
-
+    keyboard.onUnFocusNode = keyboard.focusNode
+    # Note: onFocusNode and focusNode are set by focusin.
+    keyboard.onFocusNode = nil
+    keyboard.focusNode = nil
     keyboard.input = ""
-    keyboard.inputFocusIdPath = ""
     refresh()
 
   dom.window.addEventListener "popstate", proc(event: Event) =
@@ -550,9 +611,9 @@ proc startFidget*(draw: proc()) =
 
   document.fonts.onloadingdone = proc(event: Event) =
     computeTextBoxCache.clear()
-    forceTextRelayout = true
+    forceTextReLayout = true
     hardRedraw()
-    forceTextRelayout = false
+    forceTextReLayout = false
 
 proc openBrowser*(url: string) =
   ## Opens a URL in a browser
@@ -590,7 +651,7 @@ proc setUrl*(url: string) =
 proc loadFont*(name: string, pathOrUrl: string) =
   ## Loads a font.
   dom.window.document.write &"""
-    <style>@font-face {{font-family: '{name}'; src: URL('{pathOrUrl}') format('truetype');}}</style>
+    <style>@font-face {{font-family: '{name}'; src: URL('{dataDir / pathOrUrl}') format('truetype');}}</style>
   """
 
 proc setItem*(key, value: string) =
@@ -606,3 +667,33 @@ proc loadGoogleFontUrl*(url: string) =
   link.setAttribute("href", url)
   link.setAttribute("rel", "stylesheet")
   document.head.appendChild(link)
+
+proc httpGet*(url: string): HttpCall =
+  if url notin httpCalls:
+    result = HttpCall()
+
+    result.httpRequest = newXMLHttpRequest()
+    proc httpGetCb(e: Event) {.closure.} =
+      if result.httpRequest.readyState == rsDONE:
+        if result.httpRequest.status == 200:
+          result.status = Ready
+          result.data = $result.httpRequest.responseText
+          result.json = parseJson(result.data)
+        else:
+          result.status = Error
+      refresh()
+    result.httpRequest.onreadystatechange = httpGetCb
+    result.httpRequest.open("GET", url)
+    result.httpRequest.send()
+
+    httpCalls[url] = result
+    result.status = Loading
+  else:
+    result = httpCalls[url]
+
+  when not defined(js):
+    if result.status == Loading and result.future.finished:
+      result.status = Ready
+      result.data = result.future.read()
+
+  return

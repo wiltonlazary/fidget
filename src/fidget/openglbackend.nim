@@ -1,71 +1,93 @@
-import chroma, internal, opengl/context, opengl/input, strformat, strutils,
-    tables, times, typography, typography/textboxes, uibase, vmath
+import chroma, common, flippy, hashes, input, internal, opengl/base,
+    opengl/context, os, strformat, strutils, tables, times, typography,
+    typography/textboxes, unicode, vmath
+
+when not defined(emscripten):
+  import httpClient, asyncdispatch, asyncfutures, json
 
 export input
 
-when defined(ios) or defined(android):
-  import opengl/basemobile as base
-else:
-  import opengl/base as base
-
 var
-  ctx: Context
-  fonts = newTable[string, Font]()
+  ctx*: Context
+  glyphOffsets: Table[Hash, Vec2]
   windowTitle, windowUrl: string
 
   # Used for double-clicking
   multiClick: int
   lastClickTime: float
 
-proc hAlignMode(align: HAlign): HAlignMode =
-  case align:
-    of hLeft: HAlignMode.Left
-    of hCenter: Center
-    of hRight: HAlignMode.Right
-
-proc vAlignMode(align: VAlign): VAlignMode =
-  case align:
-    of vTop: Top
-    of vCenter: Middle
-    of vBottom: Bottom
-
-var glyphOffsets = newTable[string, Vec2]()
-
-proc drawText(group: Group) =
-  if group.textStyle.fontFamily notin fonts:
-    quit &"font not found: {group.textStyle.fontFamily}"
-
-  var font = fonts[group.textStyle.fontFamily]
-  font.size = group.textStyle.fontSize
-  font.lineHeight = group.textStyle.lineHeight
-
+computeTextLayout = proc(node: Node) =
+  var font = fonts[node.textStyle.fontFamily]
+  font.size = node.textStyle.fontSize
+  font.lineHeight = node.textStyle.lineHeight
   if font.lineHeight == 0:
     font.lineHeight = font.size
-  #print group.textStyle.lineHeight
-
-  let mousePos = mouse.pos - group.screenBox.xy
-
-  # draw masked region
-  ctx.beginMask()
-  ctx.fillRect(
-    rect(0, 0, group.screenBox.w, group.screenBox.h),
-    rgba(255, 0, 0, 255).color
+  var
+    boundsMin: Vec2
+    boundsMax: Vec2
+    size = node.box.wh
+  if node.textStyle.autoResize == tsWidthAndHeight:
+    size = vec2(0, 0)
+  node.textLayout = font.typeset(
+    node.text.toRunes(),
+    pos = vec2(0, 0),
+    size = size,
+    hAlignMode(node.textStyle.textAlignHorizontal),
+    vAlignMode(node.textStyle.textAlignVertical),
+    clip = false,
+    boundsMin = boundsMin,
+    boundsMax = boundsMax
   )
-  ctx.endMask()
+  node.textLayoutWidth = boundsMax.x - boundsMin.x
+  node.textLayoutHeight = boundsMax.y - boundsMin.y
 
-  if current.editableText and
-      mouse.down and
-      mouse.pos.inside(current.screenBox):
-    if mouse.click and keyboard.inputFocusIdPath != group.idPath:
-      keyboard.inputFocusIdPath = group.idPath
-      textBox = newTextBox(
-        font,
-        int group.screenBox.w,
-        int group.screenBox.w,
-        group.text,
-        current.multiline
-      )
+proc refresh*() =
+  ## Request the screen be redrawn
+  requestedFrame = true
+
+proc focus*(keyboard: Keyboard, node: Node) =
+  if keyboard.focusNode != node:
+    keyboard.onUnFocusNode = keyboard.focusNode
+    keyboard.onFocusNode = node
+    keyboard.focusNode = node
+
+    keyboard.input = node.text
+    textBox = newTextBox(
+      fonts[node.textStyle.fontFamily],
+      int node.screenBox.w,
+      int node.screenBox.h,
+      node.text,
+      hAlignMode(node.textStyle.textAlignHorizontal),
+      vAlignMode(node.textStyle.textAlignVertical),
+      node.multiline,
+      worldWrap = true,
+    )
+    textBox.editable = node.editableText
+    textBox.scrollable = true
+
+    refresh()
+
+proc unFocus*(keyboard: Keyboard, node: Node) =
+  if keyboard.focusNode == node:
+    keyboard.onUnFocusNode = keyboard.focusNode
+    keyboard.onFocusNode = nil
+    keyboard.focusNode = nil
+
+proc drawText(node: Node) =
+  if node.textStyle.fontFamily notin fonts:
+    quit &"font not found: {node.textStyle.fontFamily}"
+
+  var font = fonts[node.textStyle.fontFamily]
+  font.size = node.textStyle.fontSize
+  font.lineHeight = node.textStyle.lineHeight
+  if font.lineHeight == 0:
+    font.lineHeight = font.size
+
+  let mousePos = mouse.pos - node.screenBox.xy
+
+  if node.selectable and mouse.down and mouse.pos.inside(node.screenBox):
     # mouse actions click, drag, double clicking
+    keyboard.focus(node)
     if mouse.click:
       if epochTime() - lastClickTime < 0.5:
         inc multiClick
@@ -74,87 +96,117 @@ proc drawText(group: Group) =
       lastClickTime = epochTime()
       if multiClick == 1:
         textBox.selectWord(mousePos)
-        mouse.down = false
+        buttonDown[MOUSE_LEFT] = false
       elif multiClick == 2:
-        textBox.selectPeragraph(mousePos)
-        mouse.down = false
+        textBox.selectParagraph(mousePos)
+        buttonDown[MOUSE_LEFT] = false
       elif multiClick == 3:
         textBox.selectAll()
-        mouse.down = false
+        buttonDown[MOUSE_LEFT] = false
       else:
         textBox.mouseAction(mousePos, click = true, keyboard.shiftKey)
 
   if textBox != nil and
       mouse.down and
       not mouse.click and
-      keyboard.inputFocusIdPath == group.idPath:
-    # draggin the mouse
+      keyboard.focusNode == node:
+    # Dragging the mouse:
     textBox.mouseAction(mousePos, click = false, keyboard.shiftKey)
 
-  let editing = keyboard.inputFocusIdPath == group.idPath
-  var layout: seq[GlyphPosition]
+  let editing = keyboard.focusNode == node
 
   if editing:
-    if textBox.size != group.screenBox.wh:
-      textBox.resize(group.screenBox.wh)
-    layout = textBox.layout
+    if textBox.size != node.box.wh:
+      textBox.resize(node.box.wh)
+    node.textLayout = textBox.layout
     ctx.saveTransform()
     ctx.translate(-textBox.scroll)
-
     for rect in textBox.selectionRegions():
-      ctx.fillRect(rect, group.highlightColor)
-
-  if layout.len == 0:
-    var text = group.text
-    if text == "" and group.placeholder.len > 0:
-      text = group.placeholder
-    layout = font.typeset(
-      text,
-      pos = vec2(0, -1), #group.screenBox.xy,
-      size = group.screenBox.wh,
-      hAlignMode(group.textStyle.textAlignHorizontal),
-      vAlignMode(group.textStyle.textAlignVertical)
-    )
+      ctx.fillRect(rect, node.highlightColor)
+  else:
+    discard
 
   # draw characters
-  for glphyIdx, pos in layout:
+  for glyphIdx, pos in node.textLayout:
     if pos.character notin font.glyphs:
+      continue
+    if pos.rune == Rune(32):
+      # Don't draw space, even if font has a char for it.
       continue
 
     let
       font = pos.font
       subPixelShift = floor(pos.subPixelShift * 10) / 10
-      fontFamily = group.textStyle.fontFamily
-      pattern = &"{fontFamily}.{pos.character}.{$font.size}.{$subPixelShift}"
-      charKey = &"tmp/{pattern}.png"
-    if charKey notin ctx.entries:
+      fontFamily = node.textStyle.fontFamily
+
+    var
+      hashFill = hash((
+        2344,
+        fontFamily,
+        pos.character,
+        (font.size*100).int,
+        (subPixelShift*100).int,
+        0
+      ))
+      hashStroke: Hash
+
+    if node.strokeWeight > 0:
+      hashStroke = hash((
+        9812,
+        fontFamily,
+        pos.character,
+        (font.size*100).int,
+        (subPixelShift*100).int,
+        node.strokeWeight
+      ))
+
+    if hashFill notin ctx.entries:
       var
         glyph = font.glyphs[pos.character]
         glyphOffset: Vec2
-      let img = font.getGlyphImage(
+      let glyphFill = font.getGlyphImage(
         glyph,
         glyphOffset,
         subPixelShift = subPixelShift
       )
-      ctx.putImage(charKey, img)
-      glyphOffsets[charKey] = glyphOffset
+      ctx.putImage(hashFill, glyphFill)
+      glyphOffsets[hashFill] = glyphOffset
+
+    if node.strokeWeight > 0 and hashStroke notin ctx.entries:
+      var
+        glyph = font.glyphs[pos.character]
+        glyphOffset: Vec2
+      let glyphFill = font.getGlyphImage(
+        glyph,
+        glyphOffset,
+        subPixelShift = subPixelShift
+      )
+      let glyphStroke = glyphFill.outlineBorder(node.strokeWeight.int)
+      ctx.putImage(hashStroke, glyphStroke)
 
     let
-      glyphOffset = glyphOffsets[charKey]
+      glyphOffset = glyphOffsets[hashFill]
       charPos = vec2(pos.rect.x + glyphOffset.x, pos.rect.y + glyphOffset.y)
-    ctx.drawImage(charKey, charPos, group.fill)
+
+    if node.strokeWeight > 0 and node.stroke.a > 0:
+      ctx.drawImage(
+        hashStroke,
+        charPos - vec2(node.strokeWeight, node.strokeWeight),
+        node.stroke
+      )
+
+    ctx.drawImage(hashFill, charPos, node.fill)
 
   if editing:
-    # draw cursor
-    ctx.fillRect(textBox.cursorRect, group.cursorColor)
+    if textBox.cursor == textBox.selector and node.editableText:
+      # draw cursor
+      ctx.fillRect(textBox.cursorRect, node.cursorColor)
     # debug
     # ctx.fillRect(textBox.selectorRect, rgba(0, 0, 0, 255).color)
     # ctx.fillRect(rect(textBox.mousePos, vec2(4, 4)), rgba(255, 128, 128, 255).color)
     ctx.restoreTransform()
 
-    keyboard.input = textBox.text
-
-  ctx.clearMask()
+  #ctx.clearMask()
 
 proc capture*(mouse: Mouse) =
   captureMouse()
@@ -165,46 +217,64 @@ proc release*(mouse: Mouse) =
 proc hide*(mouse: Mouse) =
   hideMouse()
 
-proc draw*(group: Group) =
-  ## Draws the group
-  ctx.saveTransform()
-  ctx.translate(group.screenBox.xy)
-  if group.rotation != 0:
-    ctx.translate(group.screenBox.wh/2)
-    ctx.rotate(group.rotation/180*PI)
-    ctx.translate(-group.screenBox.wh/2)
+proc remove*(node: Node) =
+  ## Removes the node.
+  discard
 
-  if group.fill.a > 0:
-    if group.kind == "text":
-      drawText(group)
-    else:
-      if group.imageName == "":
-        if group.cornerRadius[0] != 0:
+proc removeExtraChildren*(node: Node) =
+  ## Deal with removed nodes.
+  node.nodes.setLen(node.diffIndex)
+
+proc draw*(node: Node) =
+  ## Draws the node.
+  ctx.saveTransform()
+  ctx.translate(node.screenBox.xy)
+  if node.rotation != 0:
+    ctx.translate(node.screenBox.wh/2)
+    ctx.rotate(node.rotation/180*PI)
+    ctx.translate(-node.screenBox.wh/2)
+
+  if node.clipContent:
+    ctx.beginMask()
+    ctx.fillRect(
+      rect(0, 0, node.screenBox.w, node.screenBox.h),
+      rgba(255, 0, 0, 255).color
+    )
+    ctx.endMask()
+
+  if node.kind == nkText:
+    drawText(node)
+  else:
+    if node.fill.a > 0:
+      if node.imageName == "":
+        if node.cornerRadius[0] != 0:
           ctx.fillRoundedRect(rect(
             0, 0,
-            group.screenBox.w, group.screenBox.h
-          ), group.fill, group.cornerRadius[0])
+            node.screenBox.w, node.screenBox.h
+          ), node.fill, node.cornerRadius[0])
         else:
           ctx.fillRect(rect(
             0, 0,
-            group.screenBox.w, group.screenBox.h
-          ), group.fill)
+            node.screenBox.w, node.screenBox.h
+          ), node.fill)
 
-  if group.stroke.a > 0 and group.strokeWeight > 0 and group.kind != "text":
-    ctx.strokeRoundedRect(rect(
-      0, 0,
-      group.screenBox.w, group.screenBox.h
-    ), group.stroke, group.strokeWeight, group.cornerRadius[0])
+    if node.stroke.a > 0 and node.strokeWeight > 0 and node.kind != nkText:
+      ctx.strokeRoundedRect(rect(
+        0, 0,
+        node.screenBox.w, node.screenBox.h
+      ), node.stroke, node.strokeWeight, node.cornerRadius[0])
 
-  if group.imageName != "":
-    let path = &"data/{group.imageName}.png"
-    ctx.drawImage(path, vec2(0, 0), vec2(group.screenBox.w, group.screenBox.h))
+    if node.imageName != "":
+      let path = dataDir / node.imageName
+      ctx.drawImage(path, size = vec2(node.screenBox.w, node.screenBox.h))
 
   ctx.restoreTransform()
 
-proc refresh*() =
-  ## Request the screen be redrawn
-  requestedFrame = true
+  for j in 1 .. node.nodes.len:
+    node.nodes[^j].draw()
+
+  if node.clipContent:
+    ctx.popMask()
 
 proc openBrowser*(url: string) =
   ## Opens a URL in a browser
@@ -213,77 +283,93 @@ proc openBrowser*(url: string) =
 proc setupFidget(
   openglVersion: (int, int),
   msaa: MSAA,
-  mainLoopMode: MainLoopMode
+  mainLoopMode: MainLoopMode,
+  pixelate: bool,
+  pixelScale: float32
 ) =
   base.start(openglVersion, msaa, mainLoopMode)
   setWindowTitle(windowTitle)
 
-  when defined(ios):
-    ctx = newContext(1024*4)
-  else:
-    # TODO: growing context texture
-    ctx = newContext(1024*1)
+  ctx = newContext(pixelate = pixelate, pixelScale = pixelScale)
+  requestedFrame = true
 
   base.drawFrame = proc() =
-    proj = ortho(0, windowFrame.x, windowFrame.y, 0, -100, 100)
-    setupRoot()
+    clearColorBuffer(color(1.0, 1.0, 1.0, 1.0))
+    ctx.beginFrame(windowFrame)
+    ctx.saveTransform()
+    ctx.scale(ctx.pixelScale)
 
+    setupRoot()
     root.box.x = float 0
     root.box.y = float 0
-    root.box.w = windowSize.x
-    root.box.h = windowSize.y
-
+    root.box.w = windowSize.x / pixelScale
+    root.box.h = windowSize.y / pixelScale
     scrollBox.x = float 0
     scrollBox.y = float 0
-    scrollBox.w = root.box.w
-    scrollBox.h = root.box.h
+    scrollBox.w = root.box.w / pixelScale
+    scrollBox.h = root.box.h / pixelScale
 
-    clearColorBuffer(color(1.0, 1.0, 1.0, 1.0))
-    ctx.startFrame(windowFrame)
-    ctx.saveTransform()
-    mouse.pos = mousePos / pixelRatio
+    if textBox != nil:
+      keyboard.input = textBox.text
 
     drawMain()
+
+    computeLayout(nil, root)
+    computeScreenBox(nil, root)
+
+    # Only draw the root after everything was done:
+    root.draw()
 
     ctx.restoreTransform()
     ctx.endFrame()
 
+    #dumpTree(root)
+
   useDepthBuffer(false)
 
-proc runFidget(
+proc asyncPoll() =
+  when not defined(emscripten):
+    var haveCalls = false
+    for call in httpCalls.values:
+      if call.status == Loading:
+        haveCalls = true
+        break
+    if haveCalls:
+      poll()
+
+proc startFidget*(
   draw: proc(),
-  tick: proc(),
-  openglVersion: (int, int),
-  msaa: MSAA,
-  mainLoopMode: MainLoopMode
+  tick: proc() = nil,
+  fullscreen = false,
+  w: Positive = 1280,
+  h: Positive = 800,
+  openglVersion = (4, 1),
+  msaa = msaaDisabled,
+  mainLoopMode: MainLoopMode = RepaintOnEvent,
+  pixelate = false,
+  pixelScale = 1.0
 ) =
+  ## Starts Fidget UI library
+  common.fullscreen = fullscreen
+  if not fullscreen:
+    windowSize = vec2(w.float32, h.float32)
   drawMain = draw
   tickMain = tick
-  setupFidget(openglVersion, msaa, mainLoopMode)
-  while running:
-    updateLoop()
-  exit()
+  setupFidget(openglVersion, msaa, mainLoopMode, pixelate, pixelScale)
+  mouse.pixelScale = pixelScale
+  when defined(emscripten):
+    # Emscripten can't block so it will call this callback instead.
+    proc emscripten_set_main_loop(f: proc() {.cdecl.}, a: cint, b: bool) {.importc.}
+    proc mainLoop() {.cdecl.} =
 
-when defined(ios) or defined(android):
-  proc startFidget*(draw: proc()) =
-    ## Starts Fidget UI library
-    runFidget(draw)
-else:
-  proc startFidget*(
-      draw: proc(),
-      tick: proc() = nil,
-      fullscreen = false,
-      w: Positive = 1280,
-      h: Positive = 800,
-      openglVersion = (4, 1),
-      msaa = msaaDisabled,
-      mainLoopMode: MainLoopMode = RepaintOnEvent
-  ) =
-    ## Starts Fidget UI library
-    uibase.fullscreen = fullscreen
-    if not fullscreen:
-      windowSize = vec2(w.float32, h.float32)
-    runFidget(draw, tick, openglVersion, msaa, mainLoopMode)
+      asyncPoll()
+      updateLoop()
+    emscripten_set_main_loop(main_loop, 0, true)
+  else:
+    while base.running:
+      updateLoop()
+      asyncPoll()
+    exit()
 
 proc getTitle*(): string =
   ## Gets window title
@@ -304,11 +390,14 @@ proc setUrl*(url: string) =
   refresh()
 
 proc loadFont*(name: string, pathOrUrl: string) =
-  ## Loads a font.
   if pathOrUrl.endsWith(".svg"):
-    fonts[name] = readFontSvg(pathOrUrl)
+    fonts[name] = readFontSvg(dataDir / pathOrUrl)
   elif pathOrUrl.endsWith(".ttf"):
-    fonts[name] = readFontTtf(pathOrUrl)
+    fonts[name] = readFontTtf(dataDir / pathOrUrl)
+  elif pathOrUrl.endsWith(".oft"):
+    fonts[name] = readFontOtf(dataDir / pathOrUrl)
+  else:
+    raise newException(Exception, "Unsupported font format")
 
 proc setItem*(key, value: string) =
   ## Saves value into local storage or file.
@@ -317,3 +406,30 @@ proc setItem*(key, value: string) =
 proc getItem*(key: string): string =
   ## Gets a value into local storage or file.
   readFile(&"{key}.data")
+
+when not defined(emscripten):
+  proc httpGetCb(future: Future[string]) =
+    refresh()
+
+  proc httpGet*(url: string): HttpCall =
+    if url notin httpCalls:
+      result = HttpCall()
+      var client = newAsyncHttpClient()
+      echo "new call"
+      result.future = client.getContent(url)
+      result.future.addCallback(httpGetCb)
+      httpCalls[url] = result
+      result.status = Loading
+    else:
+      result = httpCalls[url]
+
+    if result.status == Loading and result.future.finished:
+      result.status = Ready
+      try:
+        result.data = result.future.read()
+        result.json = parseJson(result.data)
+      except HttpRequestError:
+        echo getCurrentExceptionMsg()
+        result.status = Error
+
+    return

@@ -1,7 +1,9 @@
+## A bunch of nice looking controls.
+
 import fidget
 
-loadFont("IBM Plex Sans Regular", "../data/IBMPlexSans-Regular.svg")
-loadFont("IBM Plex Sans Bold", "../data/IBMPlexSans-Bold.svg")
+loadFont("IBM Plex Sans Regular", "IBMPlexSans-Regular.ttf")
+loadFont("IBM Plex Sans Bold", "IBMPlexSans-Bold.ttf")
 
 var
   textInputVar = ""
@@ -16,12 +18,7 @@ proc basicText() =
     fill "#ffffff"
     cornerRadius 0
     strokeWeight 1
-    rectangle "bg":
-      box 0, 0, 400, 185
-      constraints cMin, cMin
-      fill "#ffffff"
-      cornerRadius 0
-      strokeWeight 1
+
     text "∑":
       box 22, 122, 17, 42
       constraints cMin, cMin
@@ -116,13 +113,10 @@ proc basicText() =
 proc basicControls() =
   group "progress":
     box 260, 149, 250, 12
-    rectangle "bg":
-      box 0, 0, 250, 12
-      constraints cMin, cMin
-      fill "#ffffff"
-      stroke "#70bdcf"
-      cornerRadius 5
-      strokeWeight 1
+    fill "#ffffff"
+    stroke "#70bdcf"
+    cornerRadius 5
+    strokeWeight 1
     rectangle "fill":
       box 2, 2, 189, 8
       constraints cMin, cMin
@@ -131,16 +125,13 @@ proc basicControls() =
 
   group "dropdown":
     box 260, 115, 100, 20
-    rectangle "bg":
-      box 0, 0, 100, 20
-      constraints cMin, cMin
-      fill "#72bdd0"
-      cornerRadius 5
-      strokeWeight 1
+    fill "#72bdd0"
+    cornerRadius 5
+    strokeWeight 1
     instance "arrow":
       box 80, 0, 20, 20
       constraints cMin, cMin
-      image "arrow"
+      image "arrow.png"
     text "text":
       box 0, 0, 80, 20
       constraints cMin, cMin
@@ -195,6 +186,11 @@ proc basicControls() =
 
   group "slider":
     box 260, 90, 250, 10
+    rectangle "pip":
+      box 89, 0, 10, 10
+      constraints cMin, cMin
+      fill "#72bdd0"
+      cornerRadius 5
     rectangle "bg":
       box 0, 3, 250, 4
       constraints cMin, cMin
@@ -207,20 +203,12 @@ proc basicControls() =
       fill "#70bdcf"
       cornerRadius 2
       strokeWeight 1
-    rectangle "pip":
-      box 89, 0, 10, 10
-      constraints cMin, cMin
-      fill "#72bdd0"
-      cornerRadius 5
 
   group "segmentedContorl":
     box 260, 55, 250, 20
-    rectangle "bg":
-      box 0, 0, 250, 20
-      constraints cMin, cMin
-      fill "#72bdd0"
-      cornerRadius 5
-      strokeWeight 1
+    fill "#72bdd0"
+    cornerRadius 5
+    strokeWeight 1
     group "Button":
       box 190, 0, 60, 20
       text "text":
@@ -295,25 +283,22 @@ proc basicControls() =
         strokeWeight 1
         font "IBM Plex Sans Regular", 12, 200, 0, hCenter, vCenter
         characters "This"
+
   group "button":
     box 150, 55, 90, 20
-    rectangle "bg":
-      box 0, 0, 90, 20
-      constraints cMin, cMin
-      cornerRadius 5
-      fill "#72bdd0"
-      onHover:
-        fill "#5C8F9C"
-      onDown:
-        fill "#3E656F"
-      strokeWeight 1
+    cornerRadius 5
+    fill "#72bdd0"
+    onHover:
+      fill "#5C8F9C"
+    onDown:
+      fill "#3E656F"
     text "text":
       box 0, 0, 90, 20
       constraints cMin, cMin
       fill "#ffffff"
-      strokeWeight 1
       font "IBM Plex Sans Regular", 12, 200, 0, hCenter, vCenter
       characters "Button"
+
   group "input":
     box 260, 15, 250, 30
     rectangle "bg":
@@ -326,15 +311,18 @@ proc basicControls() =
     text "text":
       box 9, 8, 232, 15
       constraints cMin, cMin
-      highlightColor "#E5F7FE"
-      if textInputVar.len == 0:
-        fill "#72bdd0", 0.5
-      else:
-        fill "#46607e"
+      fill "#46607e"
       strokeWeight 1
       font "IBM Plex Sans Regular", 12, 200, 0, hLeft, vCenter
-      placeholder "Start typing here"
       binding textInputVar
+    text "textPlaceholder":
+      box 9, 8, 232, 15
+      constraints cMin, cMin
+      fill "#72bdd0", 0.5
+      strokeWeight 1
+      font "IBM Plex Sans Regular", 12, 200, 0, hLeft, vCenter
+      if textInputVar == "":
+        characters "Start typing here"
   group "label":
     box 150, 15, 100, 30
     text "Text field:":
@@ -352,22 +340,13 @@ proc drawMain() =
     orgBox 0, 0, 530, 185
     box root.box
     constraints cMin, cMin
-    rectangle "bg":
-      box 0, 0, 530, 185
-      constraints cMin, cMin
-      fill "#ffffff"
-      cornerRadius 0
-      strokeWeight 1
+    fill "#ffffff"
 
     group "verticalTabs":
       box 0, 0, 130, 185
       constraints cMin, cStretch
-      rectangle "bg":
-        box 0, 0, 130, 185
-        constraints cMin, cStretch
-        fill "#e5f7fe"
-        cornerRadius 0
-        strokeWeight 1
+      fill "#e5f7fe"
+
       group "tab":
         box 0, 105, 130, 30
         text "Constraints":
@@ -401,16 +380,10 @@ proc drawMain() =
         box 0, 15, 130, 30
         onClick:
           selectedTab = "Controls"
-        rectangle "hover":
-          box 0, 0, 130, 30
-          constraints cMin, cMin
-          fill "#70bdcf"
-          cornerRadius 0
-          strokeWeight 1
         text "text":
           box 25, 0, 105, 30
           constraints cMin, cMin
-          fill "#ffffff"
+          fill "#46607e"
           strokeWeight 1
           font "IBM Plex Sans Regular", 12, 200, 0, hLeft, vCenter
           characters "Contorls"

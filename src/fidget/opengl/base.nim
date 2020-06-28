@@ -1,5 +1,5 @@
-import ../uibase, chroma, input, opengl, os, perf, staticglfw, times,
-    typography/textboxes, unicode, vmath, perf, ../internal
+import ../common, ../input, ../internal, chroma, flippy, opengl, os, perf,
+    staticglfw, times, typography/textboxes, unicode, vmath
 
 when defined(glDebugMessageCallback):
   import strformat, strutils
@@ -28,7 +28,7 @@ const
 
 var
   window: staticglfw.Window
-  loopMode: MainLoopMode
+  loopMode*: MainLoopMode
   dpi*: float32
   drawFrame*: proc()
   running*, focused*, minimized*: bool
@@ -40,8 +40,6 @@ var
   dt*, fps*, tps*, avgFrameTime*: float64
   frameCount*, tickCount*: int
   lastDraw, lastTick: int64
-  view*: Mat4
-  proj*: Mat4
 
 proc updateWindowSize() =
   requestedFrame = true
@@ -70,25 +68,21 @@ proc setWindowTitle*(title: string) =
   if window != nil:
     window.setWindowTitle(title)
 
-proc preTick() =
-  ## Does input and output operations.
+proc preInput() =
   var x, y: float64
   window.getCursorPos(addr x, addr y)
-  mousePos = vec2(x, y)
-  mousePos *= pixelRatio
-  mouseDelta = mousePos - mousePosPrev
-  mousePosPrev = mousePos
+  mouse.pos = vec2(x, y)
+  mouse.pos *= pixelRatio / mouse.pixelScale
+  mouse.delta = mouse.pos - mouse.prevPos
+  mouse.prevPos = mouse.pos
+
+proc postInput() =
+  clearInputs()
+
+proc preTick() =
+  discard
 
 proc postTick() =
-  mouseWheelDelta = 0
-  mouse.click = false
-  mouse.rightClick = false
-
-  # Reset key and mouse press to default state
-  for i in 0..<buttonPress.len:
-    buttonPress[i] = false
-    buttonRelease[i] = false
-
   tpsTimeSeries.addTime()
   tps = float64(tpsTimeSeries.num())
 
@@ -126,32 +120,39 @@ proc updateLoop*(poll = true) =
         pollEvents()
       if not requestedFrame or minimized:
         # Only repaint when necessary
-        sleep(16)
+        when not defined(emscripten):
+          sleep(16)
         return
-      preTick()
-      if tickMain != nil:
-        tickMain()
-      drawAndSwap()
-      postTick()
       requestedFrame = false
-
-    of RepaintOnFrame:
-      if poll:
-        pollEvents()
-      preTick()
+      preInput()
       if tickMain != nil:
-        tickMain()
-      drawAndSwap()
-      postTick()
-
-    of RepaintSplitUpdate:
-      while lastTick < getTicks():
-        if poll:
-          pollEvents()
         preTick()
         tickMain()
         postTick()
       drawAndSwap()
+      postInput()
+
+    of RepaintOnFrame:
+      if poll:
+        pollEvents()
+      preInput()
+      if tickMain != nil:
+        preTick()
+        tickMain()
+        postTick()
+      drawAndSwap()
+      postInput()
+
+    of RepaintSplitUpdate:
+      if poll:
+        pollEvents()
+      preInput()
+      while lastTick < getTicks():
+        preTick()
+        tickMain()
+        postTick()
+      drawAndSwap()
+      postInput()
 
 proc clearDepthBuffer*() =
   glClear(GL_DEPTH_BUFFER_BIT)
@@ -164,6 +165,7 @@ proc useDepthBuffer*(on: bool) =
   if on:
     glDepthMask(GL_TRUE)
     glEnable(GL_DEPTH_TEST)
+    glDepthFunc(GL_LEQUAL)
   else:
     glDepthMask(GL_FALSE)
     glDisable(GL_DEPTH_TEST)
@@ -182,40 +184,39 @@ proc onResize(handle: staticglfw.Window, w, h: int32) {.cdecl.} =
   updateLoop(poll = false)
 
 proc onFocus(window: staticglfw.Window, state: cint) {.cdecl.} =
-  focused = state == FOCUSED
+  focused = state == 1
 
 proc onSetKey(
   window: staticglfw.Window, key, scancode, action, modifiers: cint
 ) {.cdecl.} =
   requestedFrame = true
   let setKey = action != RELEASE
+
   keyboard.altKey = setKey and ((modifiers and MOD_ALT) != 0)
   keyboard.ctrlKey = setKey and
     ((modifiers and MOD_CONTROL) != 0 or (modifiers and MOD_SUPER) != 0)
   keyboard.shiftKey = setKey and ((modifiers and MOD_SHIFT) != 0)
 
-  if keyboard.inputFocusIdPath != "":
+  # Do the text box commands.
+  if keyboard.focusNode != nil and setKey:
     keyboard.state = KeyState.Press
-    if not setKey:
-      return
-
     let
       ctrl = keyboard.ctrlKey
       shift = keyboard.shiftKey
     case cast[Button](key):
-      of LEFT:
+      of ARROW_LEFT:
         if ctrl:
           textBox.leftWord(shift)
         else:
           textBox.left(shift)
-      of RIGHT:
+      of ARROW_RIGHT:
         if ctrl:
           textBox.rightWord(shift)
         else:
           textBox.right(shift)
-      of Button.UP:
+      of ARROW_UP:
         textBox.up(shift)
-      of Button.DOWN:
+      of ARROW_DOWN:
         textBox.down(shift)
       of Button.HOME:
         textBox.startOfLine(shift)
@@ -246,7 +247,9 @@ proc onSetKey(
           textBox.selectAll()
       else:
         discard
-  elif key < buttonDown.len and key >= 0:
+
+  # Now do the buttons.
+  if key < buttonDown.len and key >= 0:
     if buttonDown[key] == false and setKey:
       buttonToggle[key] = not buttonToggle[key]
       buttonPress[key] = true
@@ -256,10 +259,10 @@ proc onSetKey(
 
 proc onScroll(window: staticglfw.Window, xoffset, yoffset: float64) {.cdecl.} =
   requestedFrame = true
-  if keyboard.inputFocusIdPath != "":
+  if keyboard.focusNode != nil:
     textBox.scrollBy(-yoffset * 50)
   else:
-    mouseWheelDelta += yoffset
+    mouse.wheelDelta += yoffset
 
 proc onMouseButton(
   window: staticglfw.Window, button, action, modifiers: cint
@@ -268,11 +271,6 @@ proc onMouseButton(
   let
     setKey = action != 0
     button = button + 1 # Fidget mouse buttons are +1 from staticglfw
-  mouse.down = setKey
-  if button == 1 and setKey:
-    mouse.click = true
-  if button == 2 and setKey:
-    mouse.rightClick = true
   if button < buttonDown.len:
     if buttonDown[button] == false and setKey == true:
       buttonPress[button] = true
@@ -285,14 +283,11 @@ proc onMouseMove(window: staticglfw.Window, x, y: cdouble) {.cdecl.} =
 
 proc onSetCharCallback(window: staticglfw.Window, character: cuint) {.cdecl.} =
   requestedFrame = true
-  if keyboard.inputFocusIdPath != "":
+  if keyboard.focusNode != nil:
     keyboard.state = KeyState.Press
     textBox.typeCharacter(Rune(character))
   else:
     keyboard.state = KeyState.Press
-    # keyboard.altKey = event.altKey
-    # keyboard.ctrlKey = event.ctrlKey
-    # keyboard.shiftKey = event.shiftKey
     keyboard.keyString = Rune(character).toUTF8()
 
 proc start*(openglVersion: (int, int), msaa: MSAA, mainLoopMode: MainLoopMode) =
@@ -323,12 +318,9 @@ proc start*(openglVersion: (int, int), msaa: MSAA, mainLoopMode: MainLoopMode) =
 
   window.makeContextCurrent()
 
-  # Load OpenGL
-  when defined(ios) or defined(android):
-    # TODO, something causes a crash
-    # loadExtensions()
-    discard
-  else:
+  when not defined(emscripten):
+    swapInterval(1)
+    # Load OpenGL
     loadExtensions()
 
   when defined(glDebugMessageCallback):
@@ -352,10 +344,11 @@ proc start*(openglVersion: (int, int), msaa: MSAA, mainLoopMode: MainLoopMode) =
       glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS)
       glEnable(GL_DEBUG_OUTPUT)
 
-  echo getVersionString()
-  echo "GL_VERSION:", cast[cstring](glGetString(GL_VERSION))
-  echo "GL_SHADING_LANGUAGE_VERSION:",
-    cast[cstring](glGetString(GL_SHADING_LANGUAGE_VERSION))
+  when defined(printGLVersion):
+    echo getVersionString()
+    echo "GL_VERSION:", cast[cstring](glGetString(GL_VERSION))
+    echo "GL_SHADING_LANGUAGE_VERSION:",
+      cast[cstring](glGetString(GL_SHADING_LANGUAGE_VERSION))
 
   discard window.setFramebufferSizeCallback(onResize)
   discard window.setWindowFocusCallback(onFocus)
@@ -366,12 +359,19 @@ proc start*(openglVersion: (int, int), msaa: MSAA, mainLoopMode: MainLoopMode) =
   discard window.setCharCallback(onSetCharCallback)
 
   glEnable(GL_BLEND)
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+  #glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+  glBlendFuncSeparate(
+    GL_SRC_ALPHA,
+    GL_ONE_MINUS_SRC_ALPHA,
+    GL_ONE,
+    GL_ONE_MINUS_SRC_ALPHA
+  )
 
   lastDraw = getTicks()
   lastTick = lastDraw
 
   onFocus(window, FOCUSED)
+  focused = true
   updateWindowSize()
 
 proc captureMouse*() =
@@ -382,3 +382,18 @@ proc releaseMouse*() =
 
 proc hideMouse*() =
   setInputMode(window, CURSOR, CURSOR_HIDDEN)
+
+proc takeScreenshot*(
+  frame = rect(0, 0, windowFrame.x, windowFrame.y)
+): flippy.Image =
+  result = newImage("", frame.w.int, frame.h.int, 4)
+  glReadPixels(
+    frame.x.GLint,
+    frame.y.GLint,
+    frame.w.GLint,
+    frame.h.GLint,
+    GL_RGBA,
+    GL_UNSIGNED_BYTE,
+    result.data[0].addr
+  )
+  result = result.flipVertical()

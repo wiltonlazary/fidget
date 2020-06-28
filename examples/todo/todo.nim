@@ -1,7 +1,10 @@
+## An example of how to implement a todo program based on:
+## https://medium.com/javascript-in-plain-english/i-created-the-exact-same-app-in-react-and-vue-part-2-angular-39b1aa289878
+
 import fidget
 
-loadFont("IBM Plex Sans Regular", "../data/IBMPlexSans-Regular.ttf")
-loadFont("IBM Plex Sans Bold", "../data/IBMPlexSans-Bold.ttf")
+loadFont("IBM Plex Sans Regular", "IBMPlexSans-Regular.ttf")
+loadFont("IBM Plex Sans Bold", "IBMPlexSans-Bold.ttf")
 
 var todoItems: seq[string]
 var newItem: string
@@ -109,7 +112,7 @@ proc drawMain() =
           constraints cScale, cScale
           fill "#000000", 0.20000000298023224
           font "IBM Plex Sans Regular", 16, 200, 0, hCenter, vCenter
-          placeholder "add new item..."
+          #placeholder "add new item..."
           binding newItem
 
 startFidget(drawMain)

@@ -1,5 +1,8 @@
 <img src="docs/banner.png">
 
+👏 👏 👏 Check out video about the library: [Fidget: Let's rethink UI development with Nim (NimConf 2020)](https://www.youtube.com/watch?v=IB8Yt2dqZbo) 👏 👏 👏
+
+
 # Fidget - A cross platform UI library for nim
 
 ⚠️ WARNING: This library is still in heavy development. ⚠️
@@ -20,7 +23,7 @@ Fidget uses plain nim-procs, nim-templates, if-statements and for-loops. As well
   <a href="http://kate.vonhouck.com/">Design done by Kate von Houck. Available for hire.</a>
 </p>
 
-See code here: [examples/basic/basic.nim](examples/basic/basic.nim)
+See code here: [examples/demo/demo.nim](examples/demo/demo.nim)
 
 ## Minimal Sample:
 
@@ -44,6 +47,9 @@ startFidget(drawMain)
   <img src="docs/minimal.png">
 </p>
 
+See code here: [examples/minimal/minimal.nim](examples/minimal/minimal.nim)
+
+
 # Backends
 
 Fidget has several backends that are planned:
@@ -62,7 +68,7 @@ Fidget has several backends that are planned:
 * Nodes are positions relative to the parent
 * Nodes have minimal set of properties that match Figma.
 * Resizing is done same way as Fimga's [Constraints](https://www.youtube.com/watch?v=rRQAQ1d9q9w).
-* Layout is done same was as Figma's [Auto Layout](https://www.youtube.com/watch?v=NrKX46DzkGQ).
+* Layout is done same way as Figma's [Auto Layout](https://www.youtube.com/watch?v=NrKX46DzkGQ).
 
 The main idea of fidget is to use standard imperative nim paradigms like nim-procs, nim-for-loops, nim-ifs, nim-templates instead of say providing a custom language, XML templates, HTML, Jinja templates, CSS ...
 
@@ -74,7 +80,7 @@ If you want to do something fancy just do a little math. Many times a simple mat
 
 # Why Nim?
 
-Nim is a great languages because it’s easy on the eyes like python, but typed and is perfromant as C. It can also compile to JavaScript, C, C++, ObjC. Nim is a great language for UI design because it has advanced templates and macros can make a really good DSL (domain specific language) - that makes writing UIs straightforward, intuitive and crossplatform.
+Nim is a great languages because it’s easy on the eyes like Python, but typed and is performant as C. It can also compile to JavaScript, C, C++, ObjC. Nim is a great language for UI design because it has advanced templates and macros can make a really good DSL (domain specific language) - that makes writing UIs straightforward, intuitive and crossplatform.
 
 # Imperative UI Style
 
