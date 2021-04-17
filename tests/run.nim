@@ -1,6 +1,6 @@
-import cligen, os, strformat
+import cligen, os, strformat, osproc
 
-let examplesDir = getCurrentDir()
+let projectDir = getCurrentDir()
 
 var runList: seq[string]
 
@@ -14,6 +14,18 @@ proc compileNative() =
     else:
       echo "[ok] " & folder
 
+proc compileTestOneFrame() =
+  for folder in runList:
+    setCurrentDir(folder)
+    let file = folder.lastPathPart
+    let cmd = &"nim c -r --hints:off --verbosity:0 -d:testOneFrame {file}.nim"
+    echo cmd
+    if execShellCmd(cmd) != 0:
+      quit "[error] " & folder
+    else:
+      echo "[ok] " & folder
+    setCurrentDir(projectDir)
+
 proc runNative() =
   for folder in runList:
     setCurrentDir(folder)
@@ -21,10 +33,13 @@ proc runNative() =
     when defined(windows):
       if execShellCmd(exeUrl & ".exe") != 0:
         quit "[error] Starting " & exeUrl & ".exe"
+    elif defined(linux):
+      if execShellCmd("xvfb-run " & getCurrentDir() & "/" & exeUrl) != 0:
+        quit "[error] Starting " & getCurrentDir() & "/" & exeUrl
     else:
-      if execShellCmd(exeUrl) != 0:
+      if execShellCmd("./" & exeUrl) != 0:
         quit "[error] Starting " & exeUrl
-    setCurrentDir(examplesDir)
+    setCurrentDir(projectDir)
 
 proc compileJS() =
   for folder in runList:
@@ -100,16 +115,19 @@ proc main(
   run: bool = false,
   wasm: bool = false,
   clean: bool = false,
+  testOneFrame: bool = false,
 ) =
 
-  if not wasm:
-    runList.add "tests/httpget"
-    runList.add "examples/hn"
+  # if not wasm:
+  #   runList.add "tests/httpget"
+  #   runList.add "examples/hn"
 
-  if not js:
-    runList.add "tests/imagegen"
-    runList.add "tests/imagestatic"
+  # if not js:
+  #   runList.add "tests/imagegen"
+  #   runList.add "tests/imagestatic"
 
+  runList.add "tests/centercentertext"
+  runList.add "tests/constrantscenteroffset"
   runList.add "tests/autolayouttext"
   runList.add "tests/autolayoutcomplex"
   runList.add "tests/autolayouthorizontal"
@@ -130,20 +148,23 @@ proc main(
   runList.add "tests/textalignexpand"
   runList.add "tests/textalignfixed"
   runList.add "tests/textandinputs"
+  runList.add "tests/cursorstyle"
 
   runList.add "examples/areas"
   runList.add "examples/demo"
   runList.add "examples/minimal"
   runList.add "examples/padofcode"
   runList.add "examples/padoftext"
-  # TODO: finish runList.add "examples/todo"
 
   if not(compile or native or js or run or wasm or clean):
     echo "Usage:"
     echo "  run --compile --native --js --run"
 
   if compile and native:
-    compileNative()
+    if testOneFrame:
+      compileTestOneFrame()
+    else:
+      compileNative()
   if run and native:
     runNative()
   if compile and js:
@@ -156,5 +177,11 @@ proc main(
     runWasm()
   if clean:
     runClean()
+
+  if testOneFrame:
+    let (outp, _) = execCmdEx("git diff *.png")
+    if len(outp) != 0:
+      echo outp
+      quit("Output does not match")
 
 dispatch(main)

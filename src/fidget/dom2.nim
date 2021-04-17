@@ -9,7 +9,8 @@
 
 ## Declaration of the Document Object Model for the `JavaScript backend
 ## <backends.html#backends-the-javascript-target>`_.
-
+# import std/private/since
+template since(foo, body: untyped) = body
 when not defined(js) and not defined(Nimdoc):
   {.error: "This module only works on the JavaScript platform".}
 
@@ -106,7 +107,17 @@ type
     memory*: PerformanceMemory
     timing*: PerformanceTiming
 
-  Selection* {.importc.} = ref object ## see `docs<https://developer.mozilla.org/en-US/docs/Web/API/Selection>`_
+  Range* {.importc.} = ref object
+    ## see `docs{https://developer.mozilla.org/en-US/docs/Web/API/Range}`_
+    collapsed*: bool
+    commonAncestorContainer*: Node
+    endContainer*: Node
+    endOffset*: int
+    startContainer*: Node
+    startOffset*: int
+
+  Selection* {.importc.} = ref object
+    ## see `docs<https://developer.mozilla.org/en-US/docs/Web/API/Selection>`_
     anchorNode*: Node
     anchorOffset*: int
     focusNode*: Node
@@ -190,6 +201,7 @@ type
   Document* = ref DocumentObj
   DocumentObj {.importc.} = object of NodeObj
     activeElement*: Element
+    documentElement*: Element
     alinkColor*: cstring
     bgColor*: cstring
     body*: Element
@@ -372,19 +384,73 @@ type
 
   Style* = ref StyleObj
   StyleObj {.importc.} = object of RootObj
+    alignContent*: cstring
+    alignItems*: cstring
+    alignSelf*: cstring
+    all*: cstring
+    animation*: cstring
+    animationDelay*: cstring
+    animationDirection*: cstring
+    animationDuration*: cstring
+    animationFillMode*: cstring
+    animationIterationCount*: cstring
+    animationName*: cstring
+    animationPlayState*: cstring
+    animationTimingFunction*: cstring
+    backdropFilter*: cstring
+    backfaceVisibility*: cstring
     background*: cstring
     backgroundAttachment*: cstring
+    backgroundBlendMode*: cstring
+    backgroundClip*: cstring
     backgroundColor*: cstring
     backgroundImage*: cstring
+    backgroundOrigin*: cstring
     backgroundPosition*: cstring
     backgroundRepeat*: cstring
     backgroundSize*: cstring
+    blockSize*: cstring
     border*: cstring
+    borderBlock*: cstring
+    borderBlockColor*: cstring
+    borderBlockEnd*: cstring
+    borderBlockEndColor*: cstring
+    borderBlockEndStyle*: cstring
+    borderBlockEndWidth*: cstring
+    borderBlockStart*: cstring
+    borderBlockStartColor*: cstring
+    borderBlockStartStyle*: cstring
+    borderBlockStartWidth*: cstring
+    borderBlockStyle*: cstring
+    borderBlockWidth*: cstring
     borderBottom*: cstring
     borderBottomColor*: cstring
+    borderBottomLeftRadius*: cstring
+    borderBottomRightRadius*: cstring
     borderBottomStyle*: cstring
     borderBottomWidth*: cstring
+    borderCollapse*: cstring
     borderColor*: cstring
+    borderEndEndRadius*: cstring
+    borderEndStartRadius*: cstring
+    borderImage*: cstring
+    borderImageOutset*: cstring
+    borderImageRepeat*: cstring
+    borderImageSlice*: cstring
+    borderImageSource*: cstring
+    borderImageWidth*: cstring
+    borderInline*: cstring
+    borderInlineColor*: cstring
+    borderInlineEnd*: cstring
+    borderInlineEndColor*: cstring
+    borderInlineEndStyle*: cstring
+    borderInlineEndWidth*: cstring
+    borderInlineStart*: cstring
+    borderInlineStartColor*: cstring
+    borderInlineStartStyle*: cstring
+    borderInlineStartWidth*: cstring
+    borderInlineStyle*: cstring
+    borderInlineWidth*: cstring
     borderLeft*: cstring
     borderLeftColor*: cstring
     borderLeftStyle*: cstring
@@ -394,86 +460,298 @@ type
     borderRightColor*: cstring
     borderRightStyle*: cstring
     borderRightWidth*: cstring
+    borderSpacing*: cstring
+    borderStartEndRadius*: cstring
+    borderStartStartRadius*: cstring
     borderStyle*: cstring
     borderTop*: cstring
     borderTopColor*: cstring
+    borderTopLeftRadius*: cstring
+    borderTopRightRadius*: cstring
     borderTopStyle*: cstring
     borderTopWidth*: cstring
     borderWidth*: cstring
     bottom*: cstring
-    boxSizing*: cstring
+    boxDecorationBreak*: cstring
     boxShadow*: cstring
+    boxSizing*: cstring
+    breakAfter*: cstring
+    breakBefore*: cstring
+    breakInside*: cstring
     captionSide*: cstring
+    caretColor*: cstring
     clear*: cstring
     clip*: cstring
     clipPath*: cstring
     color*: cstring
+    colorAdjust*: cstring
+    columnCount*: cstring
+    columnFill*: cstring
+    columnGap*: cstring
+    columnRule*: cstring
+    columnRuleColor*: cstring
+    columnRuleStyle*: cstring
+    columnRuleWidth*: cstring
+    columnSpan*: cstring
+    columnWidth*: cstring
+    columns*: cstring
+    contain*: cstring
+    content*: cstring
+    counterIncrement*: cstring
+    counterReset*: cstring
+    counterSet*: cstring
     cursor*: cstring
     direction*: cstring
     display*: cstring
     emptyCells*: cstring
+    filter*: cstring
+    flex*: cstring
+    flexBasis*: cstring
+    flexDirection*: cstring
+    flexFlow*: cstring
+    flexGrow*: cstring
+    flexShrink*: cstring
+    flexWrap*: cstring
     cssFloat*: cstring
     font*: cstring
     fontFamily*: cstring
+    fontFeatureSettings*: cstring
+    fontKerning*: cstring
+    fontLanguageOverride*: cstring
+    fontOpticalSizing*: cstring
     fontSize*: cstring
+    fontSizeAdjust*: cstring
     fontStretch*: cstring
     fontStyle*: cstring
+    fontSynthesis*: cstring
     fontVariant*: cstring
+    fontVariantAlternates*: cstring
+    fontVariantCaps*: cstring
+    fontVariantEastAsian*: cstring
+    fontVariantLigatures*: cstring
+    fontVariantNumeric*: cstring
+    fontVariantPosition*: cstring
+    fontVariationSettings*: cstring
     fontWeight*: cstring
+    gap*: cstring
+    grid*: cstring
+    gridArea*: cstring
+    gridAutoColumns*: cstring
+    gridAutoFlow*: cstring
+    gridAutoRows*: cstring
+    gridColumn*: cstring
+    gridColumnEnd*: cstring
+    gridColumnStart*: cstring
+    gridRow*: cstring
+    gridRowEnd*: cstring
+    gridRowStart*: cstring
+    gridTemplate*: cstring
+    gridTemplateAreas*: cstring
+    gridTemplateColumns*: cstring
+    gridTemplateRows*: cstring
+    hangingPunctuation*: cstring
     height*: cstring
+    hyphens*: cstring
+    imageOrientation*: cstring
+    imageRendering*: cstring
+    inlineSize*: cstring
+    inset*: cstring
+    insetBlock*: cstring
+    insetBlockEnd*: cstring
+    insetBlockStart*: cstring
+    insetInline*: cstring
+    insetInlineEnd*: cstring
+    insetInlineStart*: cstring
+    isolation*: cstring
+    justifyContent*: cstring
+    justifyItems*: cstring
+    justifySelf*: cstring
     left*: cstring
     letterSpacing*: cstring
+    lineBreak*: cstring
     lineHeight*: cstring
     listStyle*: cstring
     listStyleImage*: cstring
     listStylePosition*: cstring
     listStyleType*: cstring
     margin*: cstring
+    marginBlock*: cstring
+    marginBlockEnd*: cstring
+    marginBlockStart*: cstring
     marginBottom*: cstring
+    marginInline*: cstring
+    marginInlineEnd*: cstring
+    marginInlineStart*: cstring
     marginLeft*: cstring
     marginRight*: cstring
     marginTop*: cstring
+    mask*: cstring
+    maskBorder*: cstring
+    maskBorderMode*: cstring
+    maskBorderOutset*: cstring
+    maskBorderRepeat*: cstring
+    maskBorderSlice*: cstring
+    maskBorderSource*: cstring
+    maskBorderWidth*: cstring
+    maskClip*: cstring
+    maskComposite*: cstring
+    maskImage*: cstring
+    maskMode*: cstring
+    maskOrigin*: cstring
+    maskPosition*: cstring
+    maskRepeat*: cstring
+    maskSize*: cstring
+    maskType*: cstring
+    maxBlockSize*: cstring
     maxHeight*: cstring
+    maxInlineSize*: cstring
     maxWidth*: cstring
+    minBlockSize*: cstring
     minHeight*: cstring
+    minInlineSize*: cstring
     minWidth*: cstring
+    mixBlendMode*: cstring
+    objectFit*: cstring
+    objectPosition*: cstring
+    offset*: cstring
+    offsetAnchor*: cstring
+    offsetDistance*: cstring
+    offsetPath*: cstring
+    offsetRotate*: cstring
     opacity*: cstring
+    order*: cstring
+    orphans*: cstring
     outline*: cstring
+    outlineColor*: cstring
+    outlineOffset*: cstring
+    outlineStyle*: cstring
+    outlineWidth*: cstring
     overflow*: cstring
+    overflowAnchor*: cstring
+    overflowBlock*: cstring
+    overflowInline*: cstring
+    overflowWrap*: cstring
     overflowX*: cstring
     overflowY*: cstring
+    overscrollBehavior*: cstring
+    overscrollBehaviorBlock*: cstring
+    overscrollBehaviorInline*: cstring
+    overscrollBehaviorX*: cstring
+    overscrollBehaviorY*: cstring
     padding*: cstring
+    paddingBlock*: cstring
+    paddingBlockEnd*: cstring
+    paddingBlockStart*: cstring
     paddingBottom*: cstring
+    paddingInline*: cstring
+    paddingInlineEnd*: cstring
+    paddingInlineStart*: cstring
     paddingLeft*: cstring
     paddingRight*: cstring
     paddingTop*: cstring
     pageBreakAfter*: cstring
     pageBreakBefore*: cstring
+    pageBreakInside*: cstring
+    paintOrder*: cstring
+    perspective*: cstring
+    perspectiveOrigin*: cstring
+    placeContent*: cstring
+    placeItems*: cstring
+    placeSelf*: cstring
     pointerEvents*: cstring
     position*: cstring
+    quotes*: cstring
     resize*: cstring
     right*: cstring
+    rotate*: cstring
+    rowGap*: cstring
+    scale*: cstring
+    scrollBehavior*: cstring
+    scrollMargin*: cstring
+    scrollMarginBlock*: cstring
+    scrollMarginBlockEnd*: cstring
+    scrollMarginBlockStart*: cstring
+    scrollMarginBottom*: cstring
+    scrollMarginInline*: cstring
+    scrollMarginInlineEnd*: cstring
+    scrollMarginInlineStart*: cstring
+    scrollMarginLeft*: cstring
+    scrollMarginRight*: cstring
+    scrollMarginTop*: cstring
+    scrollPadding*: cstring
+    scrollPaddingBlock*: cstring
+    scrollPaddingBlockEnd*: cstring
+    scrollPaddingBlockStart*: cstring
+    scrollPaddingBottom*: cstring
+    scrollPaddingInline*: cstring
+    scrollPaddingInlineEnd*: cstring
+    scrollPaddingInlineStart*: cstring
+    scrollPaddingLeft*: cstring
+    scrollPaddingRight*: cstring
+    scrollPaddingTop*: cstring
+    scrollSnapAlign*: cstring
+    scrollSnapStop*: cstring
+    scrollSnapType*: cstring
     scrollbar3dLightColor*: cstring
     scrollbarArrowColor*: cstring
     scrollbarBaseColor*: cstring
+    scrollbarColor*: cstring
     scrollbarDarkshadowColor*: cstring
     scrollbarFaceColor*: cstring
     scrollbarHighlightColor*: cstring
     scrollbarShadowColor*: cstring
     scrollbarTrackColor*: cstring
+    scrollbarWidth*: cstring
+    shapeImageThreshold*: cstring
+    shapeMargin*: cstring
+    shapeOutside*: cstring
+    tabSize*: cstring
     tableLayout*: cstring
     textAlign*: cstring
+    textAlignLast*: cstring
+    textCombineUpright*: cstring
     textDecoration*: cstring
+    textDecorationColor*: cstring
+    textDecorationLine*: cstring
+    textDecorationSkipInk*: cstring
+    textDecorationStyle*: cstring
+    textDecorationThickness*: cstring
+    textEmphasis*: cstring
+    textEmphasisColor*: cstring
+    textEmphasisPosition*: cstring
+    textEmphasisStyle*: cstring
     textIndent*: cstring
+    textJustify*: cstring
+    textOrientation*: cstring
+    textOverflow*: cstring
+    textRendering*: cstring
+    textShadow*: cstring
     textTransform*: cstring
-    transform*: cstring
+    textUnderlineOffset*: cstring
+    textUnderlinePosition*: cstring
     top*: cstring
+    touchAction*: cstring
+    transform*: cstring
+    transformBox*: cstring
+    transformOrigin*: cstring
+    transformStyle*: cstring
+    transition*: cstring
+    transitionDelay*: cstring
+    transitionDuration*: cstring
+    transitionProperty*: cstring
+    transitionTimingFunction*: cstring
+    translate*: cstring
+    unicodeBidi*: cstring
     verticalAlign*: cstring
     visibility*: cstring
-    width*: cstring
     whiteSpace*: cstring
+    widows*: cstring
+    width*: cstring
+    willChange*: cstring
+    wordBreak*: cstring
     wordSpacing*: cstring
-    zIndex*: int
+    writingMode*: cstring
+    zIndex*: cstring
 
   EventPhase* = enum
     None = 0,
@@ -924,6 +1202,10 @@ type
     ## see `docs<https://developer.mozilla.org/en-US/docs/Web/API/DragEvent>`_
     dataTransfer*: DataTransfer
 
+  ClipboardEvent* {.importc.} = object of Event
+    ## see `docs<https://developer.mozilla.org/en-US/docs/Web/API/ClipboardEvent>`_
+    clipboardData*: DataTransfer
+
   TouchList* {.importc.} = ref object of RootObj
     length*: int
 
@@ -1004,11 +1286,47 @@ type
     passive*: bool
 
   FontFaceSetReady* {.importc.} = ref object
+    ## see: `docs<https://developer.mozilla.org/en-US/docs/Web/API/FontFaceSet/ready>`_
     then*: proc(cb: proc())
 
   FontFaceSet* {.importc.} = ref object
+    ## see: `docs<https://developer.mozilla.org/en-US/docs/Web/API/FontFaceSet>`_
     ready*: FontFaceSetReady
     onloadingdone*: proc(event: Event)
+
+since (1, 3):
+  type
+    DomParser* = ref object
+      ## DOM Parser object (defined on browser only, may not be on NodeJS).
+      ## * https://developer.mozilla.org/en-US/docs/Web/API/DOMParser
+      ##
+      ## .. code-block:: nim
+      ##   let prsr = newDomParser()
+      ##   discard prsr.parseFromString("<html><marquee>Hello World</marquee></html>".cstring, "text/html".cstring)
+
+    DomException* = ref DOMExceptionObj
+      ## The DOMException interface represents an abnormal event (called an exception)
+      ## which occurs as a result of calling a method or accessing a property of a web API.
+      ## Each exception has a name, which is a short "CamelCase" style string identifying
+      ## the error or abnormal condition.
+      ## https://developer.mozilla.org/en-US/docs/Web/API/DOMException
+
+    DOMExceptionObj {.importc.} = object
+
+    FileReader* = ref FileReaderObj
+      ## The FileReader object lets web applications asynchronously read the contents of files
+      ## (or raw data buffers) stored on the user's computer, using File or Blob objects to specify
+      ## the file or data to read.
+      ## https://developer.mozilla.org/en-US/docs/Web/API/FileReader
+
+    FileReaderObj {.importc.} = object of EventTargetObj
+
+    FileReaderState* = distinct range[0'u16..2'u16]
+
+  const
+    fileReaderEmpty* = 0.FileReaderState
+    fileReaderLoading* = 1.FileReaderState
+    fileReaderDone* = 2.FileReaderState
 
 proc id*(n: Node): cstring {.importcpp: "#.id", nodecl.}
 proc `id=`*(n: Node; x: cstring) {.importcpp: "#.id = #", nodecl.}
@@ -1119,12 +1437,10 @@ proc addEventListener*(et: EventTarget, ev: cstring, cb: proc(ev: Event), useCap
 proc addEventListener*(et: EventTarget, ev: cstring, cb: proc(ev: Event), options: AddEventListenerOptions)
 proc dispatchEvent*(et: EventTarget, ev: Event)
 proc removeEventListener*(et: EventTarget; ev: cstring; cb: proc(ev: Event))
-
 # Window "methods"
 proc alert*(w: Window, msg: cstring)
 proc back*(w: Window)
 proc blur*(w: Window)
-proc captureEvents*(w: Window, eventMask: int) {.deprecated.}
 proc clearInterval*(w: Window, interval: ref Interval)
 proc clearTimeout*(w: Window, timeout: ref TimeOut)
 proc close*(w: Window)
@@ -1144,7 +1460,6 @@ proc open*(w: Window, uri, windowname: cstring,
            properties: cstring = nil): Window
 proc print*(w: Window)
 proc prompt*(w: Window, text, default: cstring): cstring
-proc releaseEvents*(w: Window, eventMask: int) {.deprecated.}
 proc resizeBy*(w: Window, x, y: int)
 proc resizeTo*(w: Window, x, y: int)
 proc routeEvent*(w: Window, event: Event)
@@ -1178,15 +1493,14 @@ proc querySelector*(n: Node, selectors: cstring): Element
 proc querySelectorAll*(n: Node, selectors: cstring): seq[Element]
 
 # Document "methods"
-proc captureEvents*(d: Document, eventMask: int) {.deprecated.}
 proc createAttribute*(d: Document, identifier: cstring): Node
 proc getElementsByName*(d: Document, name: cstring): seq[Element]
 proc getElementsByTagName*(d: Document, name: cstring): seq[Element]
 proc getElementsByClassName*(d: Document, name: cstring): seq[Element]
+proc insertNode*(range: Range, node: Node)
 proc getSelection*(d: Document): Selection
 proc handleEvent*(d: Document, event: Event)
 proc open*(d: Document)
-proc releaseEvents*(d: Document, eventMask: int) {.deprecated.}
 proc routeEvent*(d: Document, event: Event)
 proc write*(d: Document, text: cstring)
 proc writeln*(d: Document, text: cstring)
@@ -1275,6 +1589,9 @@ proc now*(p: Performance): float
 
 # Selection "methods"
 proc removeAllRanges*(s: Selection)
+proc deleteFromDocument*(s: Selection)
+proc getRangeAt*(s: Selection, index: int): Range
+proc collapse*(s: Selection, node: Node, offset: int)
 converter toString*(s: Selection): cstring
 proc `$`*(s: Selection): string = $(s.toString())
 
@@ -1340,3 +1657,33 @@ proc offsetHeight*(e: Node): int {.importcpp: "#.offsetHeight", nodecl.}
 proc offsetWidth*(e: Node): int {.importcpp: "#.offsetWidth", nodecl.}
 proc offsetTop*(e: Node): int {.importcpp: "#.offsetTop", nodecl.}
 proc offsetLeft*(e: Node): int {.importcpp: "#.offsetLeft", nodecl.}
+
+since (1, 3):
+  func newDomParser*(): DOMParser {.importcpp: "new DOMParser()".}
+    ## DOM Parser constructor.
+  func parseFromString*(this: DOMParser; str: cstring; mimeType: cstring): Document {.importcpp.}
+    ## Parse from string to `Document`.
+
+  proc newDomException*(): DomException {.importcpp: "new DomException()", constructor.}
+    ## DOM Exception constructor
+  proc message*(ex: DomException): cstring {.importcpp: "#.message", nodecl.}
+    ## https://developer.mozilla.org/en-US/docs/Web/API/DOMException/message
+  proc name*(ex: DomException): cstring  {.importcpp: "#.name", nodecl.}
+    ## https://developer.mozilla.org/en-US/docs/Web/API/DOMException/name
+
+  proc newFileReader*(): FileReader {.importcpp: "new FileReader()", constructor.}
+    ## File Reader constructor
+  proc error*(f: FileReader): DOMException {.importcpp: "#.error", nodecl.}
+    ## https://developer.mozilla.org/en-US/docs/Web/API/FileReader/error
+  proc readyState*(f: FileReader): FileReaderState {.importcpp: "#.readyState", nodecl.}
+    ## https://developer.mozilla.org/en-US/docs/Web/API/FileReader/readyState
+  proc resultAsString*(f: FileReader): cstring {.importcpp: "#.result", nodecl.}
+    ## https://developer.mozilla.org/en-US/docs/Web/API/FileReader/result
+  proc abort*(f: FileReader) {.importcpp: "#.abort()".}
+    ## https://developer.mozilla.org/en-US/docs/Web/API/FileReader/abort
+  proc readAsBinaryString*(f: FileReader, b: Blob) {.importcpp: "#.readAsBinaryString(#)".}
+    ## https://developer.mozilla.org/en-US/docs/Web/API/FileReader/readAsBinaryString
+  proc readAsDataURL*(f: FileReader, b: Blob) {.importcpp: "#.readAsDataURL(#)".}
+    ## https://developer.mozilla.org/en-US/docs/Web/API/FileReader/readAsDataURL
+  proc readAsText*(f: FileReader, b: Blob, encoding = cstring"UTF-8") {.importcpp: "#.readAsText(#, #)".}
+    ## https://developer.mozilla.org/en-US/docs/Web/API/FileReader/readAsText

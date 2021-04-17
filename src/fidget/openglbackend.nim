@@ -1,8 +1,9 @@
-import chroma, common, flippy, hashes, input, internal, opengl/base,
+import chroma, common, hashes, input, internal, opengl/base,
     opengl/context, os, strformat, strutils, tables, times, typography,
-    typography/textboxes, unicode, vmath
+    typography/textboxes, unicode, vmath, opengl/formatflippy, bumpy,
+    typography/svgfont, pixie
 
-when not defined(emscripten):
+when not defined(emscripten) and not defined(fidgetNoAsync):
   import httpClient, asyncdispatch, asyncfutures, json
 
 export input
@@ -27,7 +28,7 @@ computeTextLayout = proc(node: Node) =
     boundsMax: Vec2
     size = node.box.wh
   if node.textStyle.autoResize == tsWidthAndHeight:
-    size = vec2(0, 0)
+    size.x = 0
   node.textLayout = font.typeset(
     node.text.toRunes(),
     pos = vec2(0, 0),
@@ -51,9 +52,12 @@ proc focus*(keyboard: Keyboard, node: Node) =
     keyboard.onFocusNode = node
     keyboard.focusNode = node
 
+    var font = fonts[node.textStyle.fontFamily]
+    font.size = node.textStyle.fontSize
+    font.lineHeight = node.textStyle.lineHeight
     keyboard.input = node.text
     textBox = newTextBox(
-      fonts[node.textStyle.fontFamily],
+      font,
       int node.screenBox.w,
       int node.screenBox.h,
       node.text,
@@ -85,7 +89,7 @@ proc drawText(node: Node) =
 
   let mousePos = mouse.pos - node.screenBox.xy
 
-  if node.selectable and mouse.down and mouse.pos.inside(node.screenBox):
+  if node.selectable and mouse.down and mouse.pos.overlaps(node.screenBox):
     # mouse actions click, drag, double clicking
     keyboard.focus(node)
     if mouse.click:
@@ -116,8 +120,8 @@ proc drawText(node: Node) =
   let editing = keyboard.focusNode == node
 
   if editing:
-    if textBox.size != node.box.wh:
-      textBox.resize(node.box.wh)
+    if textBox.size != node.screenBox.wh:
+      textBox.resize(node.screenBox.wh)
     node.textLayout = textBox.layout
     ctx.saveTransform()
     ctx.translate(-textBox.scroll)
@@ -128,7 +132,7 @@ proc drawText(node: Node) =
 
   # draw characters
   for glyphIdx, pos in node.textLayout:
-    if pos.character notin font.glyphs:
+    if pos.character notin font.typeface.glyphs:
       continue
     if pos.rune == Rune(32):
       # Don't draw space, even if font has a char for it.
@@ -162,7 +166,7 @@ proc drawText(node: Node) =
 
     if hashFill notin ctx.entries:
       var
-        glyph = font.glyphs[pos.character]
+        glyph = font.typeface.glyphs[pos.character]
         glyphOffset: Vec2
       let glyphFill = font.getGlyphImage(
         glyph,
@@ -174,7 +178,7 @@ proc drawText(node: Node) =
 
     if node.strokeWeight > 0 and hashStroke notin ctx.entries:
       var
-        glyph = font.glyphs[pos.character]
+        glyph = font.typeface.glyphs[pos.character]
         glyphOffset: Vec2
       let glyphFill = font.getGlyphImage(
         glyph,
@@ -236,10 +240,16 @@ proc draw*(node: Node) =
 
   if node.clipContent:
     ctx.beginMask()
-    ctx.fillRect(
-      rect(0, 0, node.screenBox.w, node.screenBox.h),
-      rgba(255, 0, 0, 255).color
-    )
+    if node.cornerRadius[0] != 0:
+      ctx.fillRoundedRect(rect(
+        0, 0,
+        node.screenBox.w, node.screenBox.h
+      ), rgba(255, 0, 0, 255).color, node.cornerRadius[0])
+    else:
+      ctx.fillRect(rect(
+        0, 0,
+        node.screenBox.w, node.screenBox.h
+      ), rgba(255, 0, 0, 255).color)
     ctx.endMask()
 
   if node.kind == nkText:
@@ -285,11 +295,12 @@ proc setupFidget(
   msaa: MSAA,
   mainLoopMode: MainLoopMode,
   pixelate: bool,
-  pixelScale: float32
+  forcePixelScale: float32
 ) =
+  pixelScale = forcePixelScale
+
   base.start(openglVersion, msaa, mainLoopMode)
   setWindowTitle(windowTitle)
-
   ctx = newContext(pixelate = pixelate, pixelScale = pixelScale)
   requestedFrame = true
 
@@ -299,20 +310,24 @@ proc setupFidget(
     ctx.saveTransform()
     ctx.scale(ctx.pixelScale)
 
+    mouse.cursorStyle = Default
+
     setupRoot()
     root.box.x = float 0
     root.box.y = float 0
-    root.box.w = windowSize.x / pixelScale
-    root.box.h = windowSize.y / pixelScale
+    root.box.w = windowLogicalSize.x
+    root.box.h = windowLogicalSize.y
     scrollBox.x = float 0
     scrollBox.y = float 0
-    scrollBox.w = root.box.w / pixelScale
-    scrollBox.h = root.box.h / pixelScale
+    scrollBox.w = root.box.w
+    scrollBox.h = root.box.h
 
     if textBox != nil:
       keyboard.input = textBox.text
 
     drawMain()
+
+    root.removeExtraChildren()
 
     computeLayout(nil, root)
     computeScreenBox(nil, root)
@@ -323,12 +338,34 @@ proc setupFidget(
     ctx.restoreTransform()
     ctx.endFrame()
 
-    #dumpTree(root)
+    # Only set mouse style when it changes.
+    if mouse.prevCursorStyle != mouse.cursorStyle:
+      mouse.prevCursorStyle = mouse.cursorStyle
+      echo mouse.cursorStyle
+      case mouse.cursorStyle:
+        of Default:
+          setCursor(cursorDefault)
+        of Pointer:
+          setCursor(cursorPointer)
+        of Grab:
+          setCursor(cursorGrab)
+        of NSResize:
+          setCursor(cursorNSResize)
+
+    when defined(testOneFrame):
+      ## This is used for test only
+      ## Take a screen shot of the first frame and exit.
+      var img = takeScreenshot()
+      img.writeFile("screenshot.png")
+      quit()
 
   useDepthBuffer(false)
 
+  if loadMain != nil:
+    loadMain()
+
 proc asyncPoll() =
-  when not defined(emscripten):
+  when not defined(emscripten) and not defined(fidgetNoAsync):
     var haveCalls = false
     for call in httpCalls.values:
       if call.status == Loading:
@@ -340,10 +377,11 @@ proc asyncPoll() =
 proc startFidget*(
   draw: proc(),
   tick: proc() = nil,
+  load: proc() = nil,
   fullscreen = false,
   w: Positive = 1280,
   h: Positive = 800,
-  openglVersion = (4, 1),
+  openglVersion = (3, 3),
   msaa = msaaDisabled,
   mainLoopMode: MainLoopMode = RepaintOnEvent,
   pixelate = false,
@@ -355,6 +393,7 @@ proc startFidget*(
     windowSize = vec2(w.float32, h.float32)
   drawMain = draw
   tickMain = tick
+  loadMain = load
   setupFidget(openglVersion, msaa, mainLoopMode, pixelate, pixelScale)
   mouse.pixelScale = pixelScale
   when defined(emscripten):
@@ -382,6 +421,9 @@ proc setTitle*(title: string) =
     setWindowTitle(title)
     refresh()
 
+proc setWindowBounds*(min, max: Vec2) =
+  base.setWindowBounds(min, max)
+
 proc getUrl*(): string =
   windowUrl
 
@@ -389,15 +431,21 @@ proc setUrl*(url: string) =
   windowUrl = url
   refresh()
 
-proc loadFont*(name: string, pathOrUrl: string) =
+proc loadFontAbsolute*(name: string, pathOrUrl: string) =
+  ## Loads fonts anywhere in the system.
+  ## Not supported on js, emscripten, ios or android.
   if pathOrUrl.endsWith(".svg"):
-    fonts[name] = readFontSvg(dataDir / pathOrUrl)
+    fonts[name] = readFontSvg(pathOrUrl)
   elif pathOrUrl.endsWith(".ttf"):
-    fonts[name] = readFontTtf(dataDir / pathOrUrl)
-  elif pathOrUrl.endsWith(".oft"):
-    fonts[name] = readFontOtf(dataDir / pathOrUrl)
+    fonts[name] = readFontTtf(pathOrUrl)
+  elif pathOrUrl.endsWith(".otf"):
+    fonts[name] = readFontOtf(pathOrUrl)
   else:
     raise newException(Exception, "Unsupported font format")
+
+proc loadFont*(name: string, pathOrUrl: string) =
+  ## Loads the font from the dataDir.
+  loadFontAbsolute(name, dataDir / pathOrUrl)
 
 proc setItem*(key, value: string) =
   ## Saves value into local storage or file.
@@ -407,7 +455,7 @@ proc getItem*(key: string): string =
   ## Gets a value into local storage or file.
   readFile(&"{key}.data")
 
-when not defined(emscripten):
+when not defined(emscripten) and not defined(fidgetNoAsync):
   proc httpGetCb(future: Future[string]) =
     refresh()
 

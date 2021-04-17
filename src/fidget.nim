@@ -1,7 +1,7 @@
 import algorithm, chroma, fidget/common, fidget/input, json, macros, strutils,
-    tables, vmath
+    tables, vmath, bumpy
 
-export chroma, common, input
+export chroma, common, input, vmath
 
 when defined(js):
   import fidget/htmlbackend
@@ -137,7 +137,7 @@ proc mouseOverlapLogic*(): bool =
   (not popupActive or inPopup) and
   current.screenBox.w > 0 and
   current.screenBox.h > 0 and
-  mouse.pos.inside(current.screenBox)
+  mouse.pos.overlaps(current.screenBox)
 
 template onClick*(inner: untyped) =
   ## On click event handler.
@@ -152,6 +152,11 @@ template onClickOutside*(inner: untyped) =
 template onRightClick*(inner: untyped) =
   ## On right click event handler.
   if buttonPress[MOUSE_RIGHT] and mouseOverlapLogic():
+    inner
+
+template onMouseDown*(inner: untyped) =
+  ## On when mouse is down and overlapping the element.
+  if buttonDown[MOUSE_LEFT] and mouseOverlapLogic():
     inner
 
 template onKey*(inner: untyped) =
@@ -181,6 +186,11 @@ template onInput*(inner: untyped) =
 template onHover*(inner: untyped) =
   ## Code in the block will run when this box is hovered.
   if mouseOverlapLogic():
+    inner
+
+template onHoverOut*(inner: untyped) =
+  ## Code in the block will run when hovering outside the box.
+  if not mouseOverlapLogic():
     inner
 
 template onDown*(inner: untyped) =
@@ -256,6 +266,13 @@ proc image*(imageName: string) =
   ## Sets image fill.
   current.imageName = imageName
 
+proc orgBox*(x, y, w, h: int|float32|float32) =
+  ## Sets the box dimensions of the original element for constraints.
+  current.orgBox.x = float32 x
+  current.orgBox.y = float32 y
+  current.orgBox.w = float32 w
+  current.orgBox.h = float32 h
+
 proc box*(x, y, w, h: float32) =
   ## Sets the box dimensions.
   current.box.x = x
@@ -270,18 +287,13 @@ proc box*(
   h: int|float32|float64
 ) =
   ## Sets the box dimensions with integers
+  ## Always set box before orgBox when doing constraints.
   box(float32 x, float32 y, float32 w, float32 h)
+  orgBox(float32 x, float32 y, float32 w, float32 h)
 
 proc box*(rect: Rect) =
   ## Sets the box dimensions with integers
   box(rect.x, rect.y, rect.w, rect.h)
-
-proc orgBox*(x, y, w, h: int|float32|float32) =
-  ## Sets the box dimensions of the original element for constraints.
-  current.orgBox.x = float32 x
-  current.orgBox.y = float32 y
-  current.orgBox.w = float32 w
-  current.orgBox.h = float32 h
 
 proc rotation*(rotationInDeg: float32) =
   ## Sets rotation in degrees.
@@ -308,6 +320,11 @@ proc transparency*(transparency: float32) =
 proc stroke*(color: Color) =
   ## Sets stroke/border color.
   current.stroke = color
+
+proc stroke*(color: Color, alpha: float32) =
+  ## Sets stroke/border color.
+  current.stroke = color
+  current.stroke.a = alpha
 
 proc stroke*(color: string, alpha = 1.0) =
   ## Sets stroke/border color.
@@ -341,6 +358,10 @@ proc multiline*(multiline: bool) =
 proc clipContent*(clipContent: bool) =
   ## Causes the parent to clip the children.
   current.clipContent = clipContent
+
+proc scrollBars*(scrollBars: bool) =
+  ## Causes the parent to clip the children and draw scroll bars.
+  current.scrollBars = scrollBars
 
 proc cursorColor*(color: Color) =
   ## Sets the color of the text cursor.

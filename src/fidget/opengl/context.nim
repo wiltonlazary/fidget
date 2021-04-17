@@ -1,5 +1,5 @@
-import buffers, chroma, flippy, hashes, opengl, os, shaders, strformat,
-    strutils, tables, textures, times, vmath
+import buffers, chroma, pixie, hashes, opengl, os, shaders, strformat,
+    strutils, tables, textures, times, vmath, formatflippy, bumpy
 
 const
   quadLimit = 10_921
@@ -335,8 +335,34 @@ proc setVertColor(buf: var seq[uint8], i: int, color: ColorRGBA) =
   buf[i * 4 + 2] = color.b
   buf[i * 4 + 3] = color.a
 
-func `*`(m: Mat4, v: Vec2): Vec2 =
-  (m * vec3(v, 0.0)).xy
+func `*`*(m: Mat4, v: Vec2): Vec2 =
+  (m * vec3(v.x, v.y, 0.0)).xy
+
+proc drawQuad*(
+  ctx: Context,
+  verts: array[4, Vec2],
+  uvs: array[4, Vec2],
+  colors: array[4, ColorRGBA],
+) =
+  ctx.checkBatch()
+
+  let offset = ctx.quadCount * 4
+  ctx.positions.data.setVert2(offset + 0, verts[0])
+  ctx.positions.data.setVert2(offset + 1, verts[1])
+  ctx.positions.data.setVert2(offset + 2, verts[2])
+  ctx.positions.data.setVert2(offset + 3, verts[3])
+
+  ctx.uvs.data.setVert2(offset + 0, uvs[0])
+  ctx.uvs.data.setVert2(offset + 1, uvs[1])
+  ctx.uvs.data.setVert2(offset + 2, uvs[2])
+  ctx.uvs.data.setVert2(offset + 3, uvs[3])
+
+  ctx.colors.data.setVertColor(offset + 0, colors[0])
+  ctx.colors.data.setVertColor(offset + 1, colors[1])
+  ctx.colors.data.setVertColor(offset + 2, colors[2])
+  ctx.colors.data.setVertColor(offset + 3, colors[3])
+
+  inc ctx.quadCount
 
 proc drawUvRect(ctx: Context, at, to: Vec2, uvAt, uvTo: Vec2, color: Color) =
   ## Adds an image rect with a path to an ctx
@@ -390,14 +416,16 @@ proc getOrLoadImageRect(ctx: Context, imagePath: string | Hash): Rect =
   if imagePath is Hash:
     return ctx.entries[imagePath]
 
-  let filePath = cast[string](imagePath) # We know it is a string
+  var filePath = cast[string](imagePath) # We know it is a string
+  if splitFile(filePath).ext == "":
+    filePath.add ".png"
   if hash(filePath) notin ctx.entries:
     # Need to load imagePath, check to see if the .flippy file is around
     echo "[load] ", filePath
     if not fileExists(filePath):
       raise newException(Exception, &"Image '{filePath}' not found")
     let flippyFilePath = filePath.changeFileExt(".flippy")
-    if not existsFile(flippyFilePath):
+    if not fileExists(flippyFilePath):
       # No Flippy file generate new one
       pngToFlippy(filePath, flippyFilePath)
     else:
@@ -474,7 +502,7 @@ proc drawSprite*(
 proc fillRect*(ctx: Context, rect: Rect, color: Color) =
   const imgKey = hash("rect")
   if imgKey notin ctx.entries:
-    var image = newImage(4, 4, 4)
+    var image = newImage(4, 4)
     image.fill(rgba(255, 255, 255, 255))
     ctx.putImage(imgKey, image)
 
@@ -502,8 +530,7 @@ proc fillRoundedRect*(ctx: Context, rect: Rect, color: Color, radius: float32) =
     w = ceil(rect.w).int
     h = ceil(rect.h).int
   if hash notin ctx.entries:
-    var image = newImage(w, h, 4)
-    image.fill(rgba(255, 255, 255, 0))
+    var image = newImage(w, h)
     image.fillRoundedRect(
       rect(0, 0, rect.w, rect.h),
       radius,
@@ -538,13 +565,12 @@ proc strokeRoundedRect*(
     w = ceil(rect.w).int
     h = ceil(rect.h).int
   if hash notin ctx.entries:
-    var image = newImage(w, h, 4)
-    image.fill(rgba(255, 255, 255, 0))
+    var image = newImage(w, h)
     image.strokeRoundedRect(
-      rect(0, 0, rect.w, rect.h),
+      rect(weight / 2, weight / 2, rect.w - weight, rect.h - weight),
       radius,
-      weight,
-      rgba(255, 255, 255, 255)
+      rgba(255, 255, 255, 255),
+      weight
     )
     ctx.putImage(hash, image)
   let
@@ -557,6 +583,47 @@ proc strokeRoundedRect*(
     uvRect.xy + uvRect.wh,
     color
   )
+
+proc line*(
+  ctx: Context, a: Vec2, b: Vec2, color: Color
+) =
+  let hash = hash((
+    2345,
+    a,
+    b
+  ))
+
+  let
+    w = ceil(abs(b.x - a.x)).int
+    h = ceil(abs(a.y - b.y)).int
+    pos = vec2(min(a.x, b.x), min(a.y, b.y))
+
+  if w == 0 or h == 0:
+    return
+
+  if hash notin ctx.entries:
+    var image = newImage(w, h)
+    image.strokeSegment(
+      segment(a - pos, b - pos),
+      rgba(255, 255, 255, 255)
+    )
+    ctx.putImage(hash, image)
+  let
+    uvRect = ctx.entries[hash]
+    wh = vec2(w.float32, h.float32) * ctx.atlasSize.float32
+  ctx.drawUvRect(
+    pos,
+    pos + vec2(w.float32, h.float32),
+    uvRect.xy,
+    uvRect.xy + uvRect.wh,
+    color
+  )
+
+proc linePolygon*(
+  ctx: Context, poly: seq[Vec2], color: Color
+) =
+  for i in 0 ..< poly.len:
+    ctx.line(poly[i], poly[(i+1) mod poly.len], color)
 
 proc clearMask*(ctx: Context) =
   ## Sets mask off (actually fills the mask with white).
@@ -637,7 +704,7 @@ proc beginFrame*(ctx: Context, frameSize: Vec2) =
   beginFrame(
     ctx,
     frameSize,
-    ortho(0, frameSize.x, frameSize.y, 0, -1000, 1000)
+    ortho[float32](0.0, frameSize.x, frameSize.y, 0, -1000.0, 1000.0)
   )
 
 proc endFrame*(ctx: Context) =
@@ -653,17 +720,17 @@ proc translate*(ctx: Context, v: Vec2) =
   ## Translate the internal transform.
   ctx.mat = ctx.mat * translate(vec3(v))
 
-proc rotate*(ctx: Context, angle: float) =
+proc rotate*(ctx: Context, angle: float32) =
   ## Rotates the internal transform.
-  ctx.mat = ctx.mat * rotateZ(angle).mat4()
+  ctx.mat = ctx.mat * rotateZ(angle)
 
-proc scale*(ctx: Context, scale: float) =
+proc scale*(ctx: Context, s: float32) =
   ## Scales the internal transform.
-  ctx.mat = ctx.mat * scaleMat(scale)
+  ctx.mat = ctx.mat * scale(vec3(s))
 
-proc scale*(ctx: Context, scale: Vec2) =
+proc scale*(ctx: Context, s: Vec2) =
   ## Scales the internal transform.
-  ctx.mat = ctx.mat * scaleMat(vec3(scale, 1))
+  ctx.mat = ctx.mat * scale(vec3(s.x, s.y, 1))
 
 proc saveTransform*(ctx: Context) =
   ## Pushes a transform onto the stack.
@@ -684,5 +751,5 @@ proc fromScreen*(ctx: Context, windowFrame: Vec2, v: Vec2): Vec2 =
 
 proc toScreen*(ctx: Context, windowFrame: Vec2, v: Vec2): Vec2 =
   ## Takes a point from current transform and translates it to screen.
-  result = (ctx.mat * vec3(v, 1)).xy
+  result = (ctx.mat * vec3(v.x, v.y, 1)).xy
   result.y = -result.y + windowFrame.y

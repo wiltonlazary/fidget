@@ -1,5 +1,5 @@
-import ../common, ../input, ../internal, chroma, flippy, opengl, os, perf,
-    staticglfw, times, typography/textboxes, unicode, vmath
+import ../common, ../input, ../internal, chroma, pixie, opengl, os, perf,
+    staticglfw, times, typography/textboxes, unicode, vmath, strformat, bumpy
 
 when defined(glDebugMessageCallback):
   import strformat, strutils
@@ -41,6 +41,16 @@ var
   frameCount*, tickCount*: int
   lastDraw, lastTick: int64
 
+var
+  cursorDefault*: CursorHandle
+  cursorPointer*: CursorHandle
+  cursorGrab*: CursorHandle
+  cursorNSResize*: CursorHandle
+
+proc setCursor*(cursor: CursorHandle) =
+  echo "set cursor"
+  window.setCursor(cursor)
+
 proc updateWindowSize() =
   requestedFrame = true
 
@@ -63,6 +73,8 @@ proc updateWindowSize() =
     mode = monitor.getVideoMode()
   monitor.getMonitorPhysicalSize(addr cwidth, addr cheight)
   dpi = mode.width.float32 / (cwidth.float32 / 25.4)
+
+  windowLogicalSize = windowSize / pixelScale * pixelRatio
 
 proc setWindowTitle*(title: string) =
   if window != nil:
@@ -311,12 +323,32 @@ proc start*(openglVersion: (int, int), msaa: MSAA, mainLoopMode: MainLoopMode) =
       mode = getVideoMode(monitor)
     window = createWindow(mode.width, mode.height, "", monitor, nil)
   else:
-    window = createWindow(windowSize.x.cint, windowSize.y.cint, "", nil, nil)
+    let
+      monitor = getPrimaryMonitor()
+    var dpiScale, yScale: cfloat
+    monitor.getMonitorContentScale(addr dpiScale, addr yScale)
+    assert dpiScale == yScale
+
+    window = createWindow(
+      (windowSize.x / dpiScale * pixelScale).cint,
+      (windowSize.y / dpiScale * pixelScale).cint,
+      "",
+      nil,
+      nil
+    )
 
   if window.isNil:
-    quit("Failed to open window.")
+    quit(
+      "Failed to open window. GL version:" &
+      &"{openglVersion[0]}.{$openglVersion[1]}"
+    )
 
   window.makeContextCurrent()
+
+  cursorDefault = createStandardCursor(ARROW_CURSOR)
+  cursorPointer = createStandardCursor(HAND_CURSOR)
+  cursorGrab = createStandardCursor(HAND_CURSOR)
+  cursorNSResize = createStandardCursor(HRESIZE_CURSOR)
 
   when not defined(emscripten):
     swapInterval(1)
@@ -383,10 +415,13 @@ proc releaseMouse*() =
 proc hideMouse*() =
   setInputMode(window, CURSOR, CURSOR_HIDDEN)
 
+proc setWindowBounds*(min, max: Vec2) =
+  window.setWindowSizeLimits(min.x.cint, min.y.cint, max.x.cint, max.y.cint)
+
 proc takeScreenshot*(
   frame = rect(0, 0, windowFrame.x, windowFrame.y)
-): flippy.Image =
-  result = newImage("", frame.w.int, frame.h.int, 4)
+): pixie.Image =
+  result = newImage(frame.w.int, frame.h.int)
   glReadPixels(
     frame.x.GLint,
     frame.y.GLint,
@@ -396,4 +431,4 @@ proc takeScreenshot*(
     GL_UNSIGNED_BYTE,
     result.data[0].addr
   )
-  result = result.flipVertical()
+  result.flipVertical()

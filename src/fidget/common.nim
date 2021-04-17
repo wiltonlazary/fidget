@@ -1,4 +1,4 @@
-import chroma, input, sequtils, tables, vmath, json
+import chroma, input, sequtils, tables, vmath, json, bumpy
 
 when defined(js):
   import dom2, html/ajax
@@ -142,6 +142,7 @@ type
     textLayoutWidth*: float32
     ## Can the text be selected.
     selectable*: bool
+    scrollBars*: bool ## Should it have scroll bars if children are clipped.
 
   KeyState* = enum
     Empty
@@ -161,6 +162,7 @@ type
     pixelScale*: float32
     wheelDelta*: float32
     cursorStyle*: MouseCursorStyle ## Sets the mouse cursor icon
+    prevCursorStyle*: MouseCursorStyle
 
   Keyboard* = ref object
     state*: KeyState
@@ -208,9 +210,11 @@ var
   popupActive*: bool
   inPopup*: bool
   fullscreen* = false
+  windowLogicalSize*: Vec2 ## Screen size in logical coordinates.
   windowSize*: Vec2    ## Screen coordinates
   windowFrame*: Vec2   ## Pixel coordinates
   pixelRatio*: float32 ## Multiplier to convert from screen coords to pixels
+  pixelScale*: float32 ## Pixel multiplier user wants on the UI
 
   # Used to check for duplicate ID paths.
   pathChecker*: Table[string, bool]
@@ -248,7 +252,7 @@ when not defined(js):
       of vBottom: Bottom
 
 mouse = Mouse()
-mouse.pos = Vec2()
+mouse.pos = vec2(0)
 
 proc dumpTree*(node: Node, indent = "") =
   echo indent, node.id, node.screenBox
@@ -382,7 +386,8 @@ proc computeLayout*(parent, node: Node) =
       let xDiff = parent.box.w - parent.orgBox.w
       node.box.w += xDiff
     of cCenter:
-      node.box.x = floor((parent.box.w - node.box.w) / 2.0)
+      let offset = floor((node.orgBox.w - parent.orgBox.w) / 2.0 + node.orgBox.x)
+      node.box.x = floor((parent.box.w - node.box.w) / 2.0) + offset
 
   case node.constraintsHorizontal:
     of cMin: discard
@@ -397,12 +402,12 @@ proc computeLayout*(parent, node: Node) =
       let yDiff = parent.box.h - parent.orgBox.h
       node.box.h += yDiff
     of cCenter:
-      node.box.y = floor((parent.box.h - node.box.h) / 2.0)
+      let offset = floor((node.orgBox.h - parent.orgBox.h) / 2.0 + node.orgBox.y)
+      node.box.y = floor((parent.box.h - node.box.h) / 2.0) + offset
 
   # Typeset text
   if node.kind == nkText:
     computeTextLayout(node)
-
     case node.textStyle.autoResize:
       of tsNone:
         # Fixed sized text node.

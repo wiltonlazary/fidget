@@ -87,8 +87,8 @@ proc computeTextBox*(
 
   tempDiv.innerText = text
 
-  result.x = float tempDiv.clientWidth
-  result.y = float tempDiv.clientHeight
+  result.x = float(tempDiv.clientWidth) + 1.0
+  result.y = float(tempDiv.clientHeight)
   computeTextBoxCache[key] = result
 
 computeTextLayout = proc(node: Node) =
@@ -124,7 +124,7 @@ proc measureText(
 ): TextMetrics {.importcpp.}
 
 var baseLineCache = newTable[string, float]()
-proc getBaseLine *(
+proc getBaseLine*(
   fontName: string,
   fontSize: float,
   fontWeight: float,
@@ -220,13 +220,12 @@ proc draw*(index: int, node: Node, parent: Node) =
     node.cache = Node()
     node.cache.kind = node.kind
 
-
   # Add the text part if this is a text node.
   if node.kind == nkText and node.textElement == nil:
     node.textElement = document.createElement("div")
     node.textElement.style.display = "table-cell"
     node.textElement.style.position = "unset"
-    node.textElement.style.whiteSpace = "pre"
+    node.textElement.style.whiteSpace = "pre-wrap"
     node.element.appendChild(node.textElement)
 
   # Check if text should be editable by user.
@@ -254,7 +253,7 @@ proc draw*(index: int, node: Node, parent: Node) =
     else:
       0
   if node.hasDifferent(zIndex):
-    node.element.style.zIndex = node.zIndex
+    node.element.style.zIndex = $node.zIndex
 
   # Check dimensions (always absolute positioned).
   if node.hasDifferent(box):
@@ -271,11 +270,17 @@ proc draw*(index: int, node: Node, parent: Node) =
   if node.hasDifferent(transparency):
     node.element.style.opacity = $node.transparency
 
+  if node.hasDifferent(scrollBars):
+    if node.scrollBars:
+      node.element.style.overflow = "auto"
+    else:
+      node.element.style.overflow = "visible"
+
   if node.hasDifferent(clipContent):
     if node.clipContent:
       node.element.style.overflow = "hidden"
     else:
-      node.element.style.overflow = "visable"
+      node.element.style.overflow = "visible"
 
   if node.kind == nkText:
     # In a text node many params apply to the text (not the fill).
@@ -363,7 +368,6 @@ proc draw*(index: int, node: Node, parent: Node) =
     draw(i, n, node)
 
 var startTime: float
-var prevMouseCursorStyle: MouseCursorStyle
 
 proc drawStart() =
   startTime = dom.window.performance.now()
@@ -422,7 +426,10 @@ proc drawStart() =
 
   canvas.style.display = "block"
   canvas.style.position = "absolute"
-  canvas.style.zIndex = -1
+  when type(canvas.style.zIndex) is cstring:
+    canvas.style.zIndex = "-1"
+  else:
+    canvas.style.zIndex = -1
   canvas.style.left = cstring($scrollBox.x & "px")
   canvas.style.top = cstring($scrollBox.y & "px")
   canvas.style.width = cstring($width & "px")
@@ -441,8 +448,8 @@ proc drawFinish() =
   # echo perf.numLowLevelCalls
 
   # Only set mouse style when it changes.
-  if prevMouseCursorStyle != mouse.cursorStyle:
-    prevMouseCursorStyle = mouse.cursorStyle
+  if mouse.prevCursorStyle != mouse.cursorStyle:
+    mouse.prevCursorStyle = mouse.cursorStyle
     case mouse.cursorStyle:
       of Default:
         rootDomNode.style.cursor = "default"
@@ -482,10 +489,11 @@ proc refresh*() =
     requestedFrame = true
     discard dom.window.requestAnimationFrame(requestHardRedraw)
 
-proc startFidget*(draw: proc(), w = 0, h = 0) =
+proc startFidget*(draw: proc(), load: proc() = nil, w = 0, h = 0) =
   ## Start the HTML backend
   ## NOTE: returns instantly!
   drawMain = draw
+  loadMain = load
 
   dom.window.addEventListener "load", proc(event: Event) =
     ## called when html page loads and JS can start running
@@ -565,16 +573,40 @@ proc startFidget*(draw: proc(), w = 0, h = 0) =
     keyboard.state = KeyState.Up
     hardRedraw()
 
-  dom.window.addEventListener "input", proc(event: Event) =
-    ## When INPUT element has keyboard input this is called
-    keyboard.input = $document.activeElement.innerText
-    keyboard.state = Press
-    # fix keyboard input if it has \n in it
+  proc fixMultiline() =
+    ## fix keyboard input if it has \n in it
     if keyboard.focusNode != nil and not keyboard.focusNode.multiline:
       if "\n" in keyboard.input:
         keyboard.input = keyboard.input.replace("\n", "")
         document.activeElement.innerText = keyboard.input
         # TODO Keep the selection the same
+
+  dom.window.addEventListener "input", proc(event: Event) =
+    ## When INPUT element has keyboard input this is called
+    keyboard.input = $document.activeElement.innerText
+    keyboard.state = Press
+    fixMultiline()
+    refresh()
+
+  dom.window.addEventListener "paste", proc(ev: Event) =
+    ## When text is pasted into an input a content editable tag,
+    ## it needs to have its formatting removed.
+    let event = cast[ClipboardEvent](ev)
+    if keyboard.focusNode == nil:
+      return
+    var paste = $event.clipboardData.getData("text")
+    var selection = window.document.getSelection()
+    selection.deleteFromDocument()
+    if selection.rangeCount == 0:
+      return
+    selection.getRangeAt(0).insertNode(document.createTextNode(paste))
+    selection.removeAllRanges()
+    ev.preventDefault()
+    keyboard.input = $document.activeElement.innerText
+    echo "keyboard.input"
+    echo keyboard.input
+    keyboard.state = Press
+    fixMultiline()
     refresh()
 
   dom.window.addEventListener "focusin", proc(event: Event) =
@@ -615,6 +647,9 @@ proc startFidget*(draw: proc(), w = 0, h = 0) =
     hardRedraw()
     forceTextReLayout = false
 
+  if loadMain != nil:
+    loadMain()
+
 proc openBrowser*(url: string) =
   ## Opens a URL in a browser
   discard dom.window.open(url, "_blank")
@@ -641,11 +676,14 @@ proc getUrl*(): string =
     $dom.window.location.search &
     $dom.window.location.hash
 
-proc setUrl*(url: string) =
-  ## Goes to a new URL, inserts it into history so that back button works
+proc setUrl*(url: string, scrollToTop = true) =
+  ## Goes to a new URL, inserts it into history so that back button works.
+  ## Also scrolls to the top of the page to mimic how an HTML reload would look.
   if getUrl() != url:
     type Dummy = object
     dom.window.history.pushState(Dummy(), "", url)
+    if scrollToTop:
+      document.documentElement.scrollTop = 0
     refresh()
 
 proc loadFont*(name: string, pathOrUrl: string) =
@@ -667,6 +705,10 @@ proc loadGoogleFontUrl*(url: string) =
   link.setAttribute("href", url)
   link.setAttribute("rel", "stylesheet")
   document.head.appendChild(link)
+
+proc setWindowBounds*(min, max: Vec2) =
+  ## setWindowBounds does not work in JS mode.
+  discard
 
 proc httpGet*(url: string): HttpCall =
   if url notin httpCalls:

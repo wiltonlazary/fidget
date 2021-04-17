@@ -1,4 +1,4 @@
-import buffers, opengl, os, strformat, strutils, vmath
+import buffers, opengl, os, strformat, strutils, vmath, macros
 
 type
   ShaderAttrib = object
@@ -9,7 +9,7 @@ type
     name: string
     componentType: GLenum
     kind: BufferKind
-    values: array[16, float32]
+    values: array[64, uint8]
     location: GLint
     changed: bool # Flag for if this uniform has changed since last bound.
 
@@ -216,8 +216,8 @@ template newShaderStatic*(computePath: string): Shader =
   ## so it is compiled into the binary.
   const
     computeCode = staticRead(computePath)
-    dir = currentSourcePath()
-    computePathFull = dir.parentDir() / computePath
+    dir = getProjectPath()
+    computePathFull = dir / computePath
   newShader((computePathFull, computeCode))
 
 proc newShader*(vert, frag: (string, string)): Shader =
@@ -241,9 +241,9 @@ template newShaderStatic*(vertPath, fragPath: string): Shader =
   const
     vertCode = staticRead(vertPath)
     fragCode = staticRead(fragPath)
-    dir = currentSourcePath()
-    vertPathFull = dir.parentDir() / vertPath
-    fragPathFull = dir.parentDir() / fragPath
+    dir = getProjectPath()
+    vertPathFull = dir / vertPath
+    fragPathFull = dir / fragPath
   newShader((vertPathFull, vertCode), (fragPathFull, fragCode))
 
 proc hasUniform*(shader: Shader, name: string): bool =
@@ -257,7 +257,7 @@ proc setUniform(
   name: string,
   componentType: GLenum,
   kind: BufferKind,
-  values: array[16, float32]
+  values: array[64, uint8]
 ) =
   for uniform in shader.uniforms.mitems:
     if uniform.name == name:
@@ -271,6 +271,26 @@ proc setUniform(
       return
 
   echo &"Ignoring setUniform for \"{name}\", not active"
+
+proc setUniform(
+  shader: Shader,
+  name: string,
+  componentType: GLenum,
+  kind: BufferKind,
+  values: array[16, float32]
+) =
+  assert componentType == cGL_FLOAT
+  setUniform(shader, name, componentType, kind, cast[array[64, uint8]](values))
+
+proc setUniform(
+  shader: Shader,
+  name: string,
+  componentType: GLenum,
+  kind: BufferKind,
+  values: array[16, int32]
+) =
+  assert componentType == cGL_INT
+  setUniform(shader, name, componentType, kind, cast[array[64, uint8]](values))
 
 proc raiseUniformVarargsException(name: string, count: int) =
   raise newException(
@@ -295,9 +315,9 @@ proc raiseUniformKindException(name: string, kind: BufferKind) =
   )
 
 proc setUniform*(shader: Shader, name: string, args: varargs[int32]) =
-  var values: array[16, float32]
+  var values: array[16, int32]
   for i in 0 ..< min(len(args), 16):
-    values[i] = args[i].float32
+    values[i] = args[i]
 
   var kind: BufferKind
   case len(args):
@@ -350,11 +370,11 @@ proc setUniform*(shader: Shader, name: string, v: Vec4) =
   shader.setUniform(name, cGL_FLOAT, bkVEC4, values)
 
 proc setUniform*(shader: Shader, name: string, m: Mat4) =
-  shader.setUniform(name, cGL_FLOAT, bkMAT4, m)
+  shader.setUniform(name, cGL_FLOAT, bkMAT4, cast[array[16, float32]](m))
 
 proc setUniform*(shader: Shader, name: string, b: bool) =
-  var values: array[16, float32]
-  values[0] = b.float32
+  var values: array[16, int32]
+  values[0] = b.int32
   shader.setUniform(name, cGL_INT, bkSCALAR, values)
 
 proc bindUniforms*(shader: Shader) =
@@ -362,73 +382,66 @@ proc bindUniforms*(shader: Shader) =
     if uniform.componentType == 0.GLenum:
       continue
 
-    if uniform.componentType != cGL_INT and uniform.componentType != cGL_FLOAT:
-      raiseUniformComponentTypeException(uniform.name, uniform.componentType)
-
     if not uniform.changed:
       continue
 
-    case uniform.kind:
+    if uniform.componentType == cGL_INT:
+      let values = cast[array[16, GLint]](uniform.values)
+      case uniform.kind:
       of bkSCALAR:
-        if uniform.componentType == cGL_INT:
-          glUniform1i(uniform.location, uniform.values[0].GLint)
-        else:
-          glUniform1f(uniform.location, uniform.values[0])
+        glUniform1i(uniform.location, values[0])
       of bkVEC2:
-        if uniform.componentType == cGL_INT:
-          glUniform2i(
-            uniform.location,
-            uniform.values[0].GLint,
-            uniform.values[1].GLint)
-        else:
-          glUniform2f(
-            uniform.location,
-            uniform.values[0],
-            uniform.values[1]
-          )
+        glUniform2i(uniform.location, values[0], values[1])
       of bkVEC3:
-        if uniform.componentType == cGL_INT:
-          glUniform3i(
-            uniform.location,
-            uniform.values[0].GLint,
-            uniform.values[1].GLint,
-            uniform.values[2].GLint
-          )
-        else:
-          glUniform3f(
-            uniform.location,
-            uniform.values[0],
-            uniform.values[1],
-            uniform.values[2]
-          )
+        glUniform3i(uniform.location, values[0], values[1], values[2])
       of bkVEC4:
-        if uniform.componentType == cGL_INT:
-          glUniform4i(
-            uniform.location,
-            uniform.values[0].GLint,
-            uniform.values[1].GLint,
-            uniform.values[2].GLint,
-            uniform.values[3].GLint
-          )
-        else:
-          glUniform4f(
-            uniform.location,
-            uniform.values[0],
-            uniform.values[1],
-            uniform.values[2],
-            uniform.values[3]
-          )
+        glUniform4i(
+          uniform.location,
+          values[0],
+          values[1],
+          values[2],
+          values[3]
+        )
+      else:
+        raiseUniformKindException(uniform.name, uniform.kind)
+    elif uniform.componentType == cGL_FLOAT:
+      let values = cast[array[16, float32]](uniform.values)
+      case uniform.kind:
+      of bkSCALAR:
+        glUniform1f(uniform.location, values[0])
+      of bkVEC2:
+        glUniform2f(uniform.location, values[0], values[1])
+      of bkVEC3:
+        glUniform3f(uniform.location, values[0], values[1], values[2])
+      of bkVEC4:
+        glUniform4f(
+          uniform.location,
+          values[0],
+          values[1],
+          values[2],
+          values[3]
+        )
       of bkMAT4:
         glUniformMatrix4fv(
           uniform.location,
           1,
           GL_FALSE,
-          uniform.values[0].addr
+          values[0].unsafeAddr
         )
       else:
         raiseUniformKindException(uniform.name, uniform.kind)
+    else:
+      raiseUniformComponentTypeException(uniform.name, uniform.componentType)
 
     uniform.changed = false
+
+proc bindUniformBuffer*(
+  shader: Shader, name: string, buffer: Buffer, binding: GLuint
+) =
+  assert buffer.target == GL_UNIFORM_BUFFER
+  let index = glGetUniformBlockIndex(shader.programId, name)
+  glBindBufferBase(GL_UNIFORM_BUFFER, binding, buffer.bufferId)
+  glUniformBlockBinding(shader.programId, index, binding)
 
 proc bindAttrib*(
   shader: Shader,
